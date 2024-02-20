@@ -1,4 +1,4 @@
-module github.com/jacobmolby/bob
+module github.com/stephenafamo/bob
 
 go 1.18
 
