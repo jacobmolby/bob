@@ -27,34 +27,34 @@ func random[T any](f *faker.Faker) T {
       return any(f.BoolWithChance(50)).(T)
 
     case int:
-      return any(f.Int()).(T)
+      return any(int(f.IntBetween(0,1000))).(T)
 
     case int8:
-      return any(f.Int8()).(T)
+      return any(int8(f.IntBetween(0,1000))).(T)
 
     case int16:
-      return any(f.Int16()).(T)
+      return any(int16(f.IntBetween(0,1000))).(T)
 
     case int32:
-      return any(f.Int32()).(T)
+      return any(int32(f.IntBetween(0,1000))).(T)
 
     case int64:
-      return any(f.Int64()).(T)
+      return any(int64(f.IntBetween(0,1000))).(T)
 
     case uint:
-      return any(f.UInt()).(T)
+      return any(uint(f.IntBetween(0,1000))).(T)
 
     case uint8:
-      return any(f.UInt8()).(T)
+      return any(uint8(f.IntBetween(0,1000))).(T)
 
     case uint16:
-      return any(f.UInt16()).(T)
+      return any(uint16(f.IntBetween(0,1000))).(T)
 
     case uint32:
-      return any(f.UInt32()).(T)
+      return any(uint32(f.IntBetween(0,1000))).(T)
 
     case uint64:
-      return any(f.UInt64()).(T)
+      return any(uint64(f.IntBetween(0,1000))).(T)
 
     case float32:
       return any(f.Float32(10, -1_000_000, 1_000_000)).(T)
