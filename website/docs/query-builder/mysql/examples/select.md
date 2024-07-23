@@ -10,9 +10,9 @@ SELECT id, name FROM users WHERE (`id` IN (?, ?, ?))
 
 Args:
 
-* `100`
-* `200`
-* `300`
+- `100`
+- `200`
+- `300`
 
 Code:
 
@@ -34,9 +34,9 @@ SELECT DISTINCT id, name FROM users WHERE (`id` IN (?, ?, ?))
 
 Args:
 
-* `100`
-* `200`
-* `300`
+- `100`
+- `200`
+- `300`
 
 Code:
 
@@ -62,7 +62,7 @@ FROM (
     OVER (PARTITION BY presale_id ORDER BY created_date)
      - `created_date`) AS `difference`
   FROM presales_presalestatus
-) AS `differnce_by_status`
+) AS `difference_by_status`
 WHERE (`status` IN ('A', 'B', 'C'))
 GROUP BY status
 ```
@@ -79,7 +79,7 @@ mysql.Select(
         fm.Over().PartitionBy("presale_id").OrderBy("created_date"),
       ).Minus(mysql.Quote("created_date")).As("difference")),
     sm.From("presales_presalestatus")),
-  ).As("differnce_by_status"),
+  ).As("difference_by_status"),
   sm.Where(mysql.Quote("status").In(mysql.S("A"), mysql.S("B"), mysql.S("C"))),
   sm.GroupBy("status"),
 )
@@ -95,10 +95,10 @@ SELECT id, name FROM users WHERE ((`id`, `employee_id`) IN ((?, ?), (?, ?)))
 
 Args:
 
-* `100`
-* `200`
-* `300`
-* `400`
+- `100`
+- `200`
+- `300`
+- `400`
 
 Code:
 
