@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/aarondl/opt/null"
 	"github.com/go-sql-driver/mysql"
 	helpers "github.com/stephenafamo/bob/gen/bobgen-helpers"
 	"github.com/stephenafamo/bob/gen/drivers"
@@ -48,7 +49,7 @@ func New(config Config) Interface {
 		config.Concurrency = 10
 	}
 
-	return &driver{config: config}
+	return &driver{config: config, types: helpers.Types()}
 }
 
 // driver holds the database connection string and a handle
@@ -59,6 +60,7 @@ type driver struct {
 	conn   *sql.DB
 	dbName string
 
+	types  drivers.Types
 	enums  []drivers.Enum
 	enumMu sync.Mutex
 }
@@ -111,7 +113,7 @@ func (d *driver) Assemble(ctx context.Context) (*DBInfo, error) {
 	return dbinfo, err
 }
 
-// TableNames connects to the postgres database and
+// TableNames connects to the MySQL database and
 // retrieves all table names from the information_schema where the
 // table schema is schema. It uses a whitelist and blacklist.
 func (d *driver) TablesInfo(ctx context.Context, tableFilter drivers.Filter) (drivers.TablesInfo, error) {
@@ -222,7 +224,8 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
 			column = d.translateColumnType(column, colFullType)
 		} else {
 			enumTyp := strmangle.TitleCase(tableName + "_" + colName)
-			column.Type = enumTyp
+			column.Type = helpers.EnumType(d.types, enumTyp)
+
 			d.enumMu.Lock()
 			d.enums = append(d.enums, drivers.Enum{
 				Type:   enumTyp,
@@ -302,7 +305,7 @@ func (*driver) translateColumnType(c drivers.Column, fullType string) drivers.Co
 }
 
 func (d *driver) Types() drivers.Types {
-	return helpers.Types()
+	return d.types
 }
 
 func (d *driver) Constraints(ctx context.Context, _ drivers.ColumnFilter) (drivers.DBConstraints, error) {
@@ -379,6 +382,51 @@ func (d *driver) Constraints(ctx context.Context, _ drivers.ColumnFilter) (drive
 		if c.ForeignTable.Valid {
 			foreignTable = c.ForeignTable.String
 			foreignCols = append(foreignCols, c.ForeignColumn.String)
+		}
+	}
+
+	return ret, nil
+}
+
+func (d *driver) Indexes(ctx context.Context) (drivers.DBIndexes, error) {
+	ret := drivers.DBIndexes{}
+
+	query := `SELECT
+	s.table_name AS table_name,
+	s.index_name AS index_name,
+	s.column_name AS column_name,
+	s.expression AS expression
+	FROM information_schema.statistics s
+	WHERE s.table_schema = ?
+	ORDER BY s.table_name,s.index_name,s.seq_in_index`
+
+	type indexColumn struct {
+		TableName  string
+		IndexName  string
+		ColumnName null.Val[string]
+		Expression null.Val[string]
+	}
+	indexColumns, err := stdscan.All(ctx, d.conn, scan.StructMapper[indexColumn](), query, d.dbName)
+	if err != nil {
+		return nil, err
+	}
+	indexColumns = append(indexColumns, indexColumn{})
+
+	var current drivers.Index
+	var table string
+	for i, c := range indexColumns {
+		if i != 0 && (c.TableName != table || c.IndexName != current.Name) {
+			ret[table] = append(ret[table], current)
+			current = drivers.Index{}
+			table = "" //nolint:ineffassign
+		}
+		table = c.TableName
+		current.Name = c.IndexName
+		if c.ColumnName.IsSet() {
+			current.Columns = append(current.Columns, c.ColumnName.GetOrZero())
+		}
+		if c.Expression.IsSet() {
+			current.Expressions = append(current.Expressions, c.Expression.GetOrZero())
 		}
 	}
 

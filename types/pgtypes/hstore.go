@@ -17,7 +17,7 @@
 // OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 // SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-package types
+package pgtypes
 
 import (
 	"database/sql"
@@ -131,7 +131,7 @@ func (h *HStore) Scan(value any) error {
 // database column value will be set to NULL.
 func (h HStore) Value() (driver.Value, error) {
 	if h == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil
 	}
 	parts := []string{}
 	for key, val := range h {

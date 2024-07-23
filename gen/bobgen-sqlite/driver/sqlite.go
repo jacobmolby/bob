@@ -212,6 +212,11 @@ func (d driver) getTable(ctx context.Context, schema, name string) (drivers.Tabl
 		return table, err
 	}
 
+	table.Indexes, err = d.indexes(ctx, schema, name)
+	if err != nil {
+		return table, err
+	}
+
 	return table, nil
 }
 
@@ -562,4 +567,149 @@ func (driver) translateColumnType(c drivers.Column) drivers.Column {
 	}
 
 	return c
+}
+
+func (d *driver) indexes(ctx context.Context, schema, tableName string) ([]drivers.Index, error) {
+	//nolint:gosec
+	query := fmt.Sprintf("SELECT name FROM '%s'.pragma_index_list('%s') ORDER BY name ASC", schema, tableName)
+	rows, err := d.conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var indexNames []string
+	for rows.Next() {
+		var name string
+		err = rows.Scan(&name)
+		if err != nil {
+			return nil, err
+		}
+		indexNames = append(indexNames, name)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	indexes := make([]drivers.Index, len(indexNames))
+	for i, indexName := range indexNames {
+		indexes[i], err = d.getIndexInformation(ctx, schema, tableName, indexName)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return indexes, nil
+}
+
+func (d *driver) getIndexInformation(ctx context.Context, schema, tableName, indexName string) (drivers.Index, error) {
+	var index drivers.Index
+	index.Name = indexName
+
+	//nolint:gosec
+	query := fmt.Sprintf("SELECT name FROM '%s'.pragma_index_info('%s') ORDER BY seqno ASC", schema, indexName)
+	rows, err := d.conn.QueryContext(ctx, query)
+	if err != nil {
+		return index, err
+	}
+	defer rows.Close()
+
+	exprCols := make(map[int]struct{})
+	for seqno := 0; rows.Next(); seqno++ {
+		var name null.Val[string]
+		err = rows.Scan(&name)
+		if err != nil {
+			return index, err
+		}
+		if name.IsSet() {
+			index.Columns = append(index.Columns, name.GetOrZero())
+		} else {
+			exprCols[seqno] = struct{}{}
+		}
+	}
+
+	if len(exprCols) > 0 {
+		index.Expressions, err = d.extractIndexExpressions(ctx, schema, tableName, indexName, exprCols)
+		if err != nil {
+			return index, err
+		}
+	}
+
+	if err = rows.Err(); err != nil {
+		return index, err
+	}
+
+	return index, nil
+}
+
+func (d driver) extractIndexExpressions(ctx context.Context, schema, tableName, indexName string, exprCols map[int]struct{}) ([]string, error) {
+	var ddl string
+	var expressions []string //nolint:prealloc
+	//nolint:gosec
+	query := fmt.Sprintf("SELECT sql FROM '%s'.sqlite_master WHERE type = 'index' AND name = ? AND tbl_name = ?", schema)
+	result := d.conn.QueryRowContext(ctx, query, indexName, tableName)
+	err := result.Scan(&ddl)
+	if err != nil {
+		return expressions, fmt.Errorf("failed retrieving index DDL statement: %w", err)
+	}
+	// We're following the parsing logic from the `intckParseCreateIndex` function in the SQLite source code.
+	// 1. https://github.com/sqlite/sqlite/blob/1d8cde9d56d153767e98595c4b015221864ef0e7/ext/intck/sqlite3intck.c#L363
+	// 2. https://www.sqlite.org/lang_createindex.html
+
+	// skip forward until the first "(" token
+	i := strings.Index(ddl, "(")
+	if i == -1 {
+		return expressions, fmt.Errorf("failed locating first column: %w", err)
+	}
+	ddl = ddl[i+1:]
+	// discard the WHERE clause fragment (if one exists)
+	i = strings.LastIndex(ddl, ")")
+	if i == -1 {
+		return expressions, fmt.Errorf("failed locating last column: %w", err)
+	}
+	ddl = ddl[:i]
+	// organize column definitions into a list
+	colDefs := d.splitColumnDefinitions(ddl)
+
+	for seqno, expression := range colDefs {
+		if _, ok := exprCols[seqno]; !ok {
+			// this index column references a regular column rather than an expression, so we skip the extraction.
+			continue
+		}
+		expressions = append(expressions, strings.TrimSpace(expression))
+	}
+
+	return expressions, nil
+}
+
+// splitColumnDefinitions performs an intelligent split of the DDL part defining the index columns.
+//
+// We cannot perform a simple `strings.Split(ddl, ",")` as `ddl` could contain functional expressions, i.e.:
+//
+//	sql  := CREATE INDEX idx ON test (col1, (col2 + col3), (POW(col3, 2)));
+//	ddl  := "col1, (col2 + col3), (POW(col3, 2))"
+//	defs := []string{"col1", "(col2 + col3)", "(POW(col3, 2))"}
+func (d driver) splitColumnDefinitions(ddl string) []string {
+	var defs []string
+	var i, pOpen int
+
+	for j := 0; j < len(ddl); j++ {
+		if ddl[j] == '(' {
+			pOpen++
+		}
+		if ddl[j] == ')' {
+			pOpen--
+		}
+		if pOpen == 0 && ddl[j] == ',' {
+			defs = append(defs, ddl[i:j])
+			i = j + 1
+		}
+	}
+
+	if i < len(ddl) {
+		defs = append(defs, ddl[i:])
+	}
+
+	return defs
 }

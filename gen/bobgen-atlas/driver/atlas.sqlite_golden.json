@@ -61,6 +61,23 @@
 					"type": "string"
 				}
 			],
+			"indexes": [
+				{
+					"name": "autoinckeywordtest_sponsor_id",
+					"columns": [
+						"sponsor_id"
+					],
+					"expressions": null
+				},
+				{
+					"name": "autoinckeywordtest_something_another",
+					"columns": [
+						"something",
+						"another"
+					],
+					"expressions": null
+				}
+			],
 			"constraints": {
 				"primary": {
 					"name": "pk_autoinckeywordtest",
@@ -84,13 +101,13 @@
 				],
 				"uniques": [
 					{
-						"name": "sqlite_autoindex_autoinckeywordtest_1",
+						"name": "autoinckeywordtest_sponsor_id",
 						"columns": [
 							"sponsor_id"
 						]
 					},
 					{
-						"name": "sqlite_autoindex_autoinckeywordtest_2",
+						"name": "autoinckeywordtest_something_another",
 						"columns": [
 							"something",
 							"another"
@@ -116,6 +133,7 @@
 					"type": "int32"
 				}
 			],
+			"indexes": null,
 			"constraints": {
 				"primary": {
 					"name": "pk_autoinctest",
@@ -188,6 +206,7 @@
 					"type": "string"
 				}
 			],
+			"indexes": null,
 			"constraints": {
 				"primary": {
 					"name": "pk_has_generated_columns",
@@ -216,6 +235,15 @@
 					"type": "int32"
 				}
 			],
+			"indexes": [
+				{
+					"name": "sqlite_autoindex_sponsors_1",
+					"columns": [
+						"id"
+					],
+					"expressions": null
+				}
+			],
 			"constraints": {
 				"primary": {
 					"name": "pk_sponsors",
@@ -242,6 +270,15 @@
 					"autoincr": false,
 					"domain_name": "",
 					"type": "int32"
+				}
+			],
+			"indexes": [
+				{
+					"name": "sqlite_autoindex_tags_1",
+					"columns": [
+						"id"
+					],
+					"expressions": null
 				}
 			],
 			"constraints": {
@@ -1504,6 +1541,15 @@
 					"type": "string"
 				}
 			],
+			"indexes": [
+				{
+					"name": "sqlite_autoindex_type_monsters_1",
+					"columns": [
+						"id"
+					],
+					"expressions": null
+				}
+			],
 			"constraints": {
 				"primary": {
 					"name": "pk_type_monsters",
@@ -1530,6 +1576,15 @@
 					"autoincr": false,
 					"domain_name": "",
 					"type": "int32"
+				}
+			],
+			"indexes": [
+				{
+					"name": "sqlite_autoindex_users_1",
+					"columns": [
+						"id"
+					],
+					"expressions": null
 				}
 			],
 			"constraints": {
@@ -1569,6 +1624,16 @@
 					"autoincr": false,
 					"domain_name": "",
 					"type": "int32"
+				}
+			],
+			"indexes": [
+				{
+					"name": "sqlite_autoindex_video_tags_1",
+					"columns": [
+						"video_id",
+						"tag_id"
+					],
+					"expressions": null
 				}
 			],
 			"constraints": {
@@ -1643,6 +1708,22 @@
 					"type": "int32"
 				}
 			],
+			"indexes": [
+				{
+					"name": "sqlite_autoindex_videos_1",
+					"columns": [
+						"id"
+					],
+					"expressions": null
+				},
+				{
+					"name": "videos_sponsor_id",
+					"columns": [
+						"sponsor_id"
+					],
+					"expressions": null
+				}
+			],
 			"constraints": {
 				"primary": {
 					"name": "pk_videos",
@@ -1674,7 +1755,7 @@
 				],
 				"uniques": [
 					{
-						"name": "sqlite_autoindex_videos_2",
+						"name": "videos_sponsor_id",
 						"columns": [
 							"sponsor_id"
 						]

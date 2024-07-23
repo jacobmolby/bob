@@ -136,32 +136,37 @@ func GetConfigFromProvider[DriverConfig any](provider koanf.Provider, driverConf
 	return config, driverConfig, nil
 }
 
-const parrayImport = `"github.com/stephenafamo/bob/types/parray"`
-
-func AddPgEnumType(types drivers.Types, enum string) string {
+func EnumType(types drivers.Types, enum string) string {
 	types[enum] = drivers.Type{
 		NoRandomizationTest: true, // enums are often not random enough
 		RandomExpr: fmt.Sprintf(`all := all%s()
-            return any(all[f.IntBetween(0, len(all)-1)]).(T)`, enum),
+            return all[f.IntBetween(0, len(all)-1)]`, enum),
 	}
 
 	return enum
 }
 
-func AddPgEnumArrayType(types drivers.Types, enum string) string {
-	typ := fmt.Sprintf("parray.EnumArray[%s]", enum)
+const pgtypesImport = `"github.com/stephenafamo/bob/types/pgtypes"`
 
-	types[typ] = drivers.Type{
-		Imports:             importers.List{parrayImport},
+func AddPgEnumArrayType(types drivers.Types, enumTyp string) string {
+	arrTyp := fmt.Sprintf("pgtypes.EnumArray[%s]", enumTyp)
+
+	// premptively add the enum type
+	// this is to prevent issues if the enum is only used in an array
+	EnumType(types, enumTyp)
+
+	types[arrTyp] = drivers.Type{
+		DependsOn:           []string{enumTyp},
+		Imports:             importers.List{pgtypesImport},
 		NoRandomizationTest: true, // enums are often not random enough
 		RandomExpr: fmt.Sprintf(`arr := make(%s, f.IntBetween(1, 5))
             for i := range arr {
-                arr[i] = random[%s](f)
+                arr[i] = random_%s(f)
             }
-            return any(arr).(T)`, typ, enum),
+            return arr`, arrTyp, gen.NormalizeType(enumTyp)),
 	}
 
-	return typ
+	return arrTyp
 }
 
 func AddPgGenericArrayType(types drivers.Types, singleTyp string) string {
@@ -172,21 +177,23 @@ func AddPgGenericArrayType(types drivers.Types, singleTyp string) string {
 		singleComparer = "a == b"
 	}
 
-	typ := fmt.Sprintf("parray.Array[%s]", singleTyp)
+	typ := fmt.Sprintf("pgtypes.Array[%s]", singleTyp)
 
 	types[typ] = drivers.Type{
-		Imports: append(importers.List{parrayImport}, singleTypDef.Imports...),
+		DependsOn: []string{singleTyp},
+		Imports:   append(importers.List{pgtypesImport}, singleTypDef.Imports...),
 		RandomExpr: fmt.Sprintf(`arr := make(%s, f.IntBetween(1, 5))
             for i := range arr {
-                arr[i] = random[%s](f)
+                arr[i] = random_%s(f)
             }
-            return any(arr).(T)`, typ, singleTyp),
+            return arr`, typ, gen.NormalizeType(singleTyp)),
 		CompareExpr: fmt.Sprintf(`slices.EqualFunc(AAA, BBB, func(a, b %s) bool {
                 return %s
             })`, singleTyp, singleComparer),
-		CompareExprImports: append(
+		CompareExprImports: append(append(
 			importers.List{`"slices"`},
 			singleTypDef.CompareExprImports...),
+			singleTypDef.Imports...),
 	}
 
 	return typ
@@ -194,30 +201,94 @@ func AddPgGenericArrayType(types drivers.Types, singleTyp string) string {
 
 func Types() drivers.Types {
 	return drivers.Types{
+		"bool": {
+			NoRandomizationTest: true,
+			RandomExpr:          `return f.Bool()`,
+		},
+		"int": {
+			RandomExpr: `return f.Int()`,
+		},
+		"int8": {
+			RandomExpr: `return f.Int8()`,
+		},
+		"int16": {
+			RandomExpr: `return f.Int16()`,
+		},
+		"int32": {
+			RandomExpr: `return f.Int32()`,
+		},
+		"int64": {
+			RandomExpr: `return f.Int64()`,
+		},
+		"uint": {
+			RandomExpr: `return f.UInt()`,
+		},
+		"uint8": {
+			RandomExpr: `return f.UInt8()`,
+		},
+		"uint16": {
+			RandomExpr: `return f.UInt16()`,
+		},
+		"uint32": {
+			RandomExpr: `return f.UInt32()`,
+		},
+		"uint64": {
+			RandomExpr: `return f.UInt64()`,
+		},
+		"float32": {
+			RandomExpr: `return f.Float32(10, -1_000_000, 1_000_000)`,
+		},
+		"float64": {
+			RandomExpr: `return f.Float64(10, -1_000_000, 1_000_000)`,
+		},
+		"string": {
+			RandomExpr:        `return strings.Join(f.Lorem().Words(f.IntBetween(1, 5)), " ")`,
+			RandomExprImports: importers.List{`"strings"`},
+		},
 		"[]byte": {
-			CompareExpr:        `bytes.Equal(AAA, BBB)`,
-			CompareExprImports: importers.List{`"bytes"`},
+			DependsOn:           []string{"string"},
+			RandomExpr:          `return []byte(random_string(f))`,
+			CompareExpr:         `bytes.Equal(AAA, BBB)`,
+			CompareExprImports:  importers.List{`"bytes"`},
+			NoScannerValuerTest: true,
 		},
 		"time.Time": {
 			Imports: importers.List{`"time"`},
 			RandomExpr: `year := time.Hour * 24 * 365
                 min := time.Now().Add(-year)
                 max := time.Now().Add(year)
-                return any(f.Time().TimeBetween(min, max)).(T)`,
-			CompareExpr: `AAA.Equal(BBB)`,
+                return f.Time().TimeBetween(min, max)`,
+			CompareExpr:         `AAA.Equal(BBB)`,
+			NoScannerValuerTest: true,
 		},
-		"netip.Addr": {
-			Imports: importers.List{`"net/netip"`},
+		"types.Text[netip.Addr, *netip.Addr]": {
+			Imports: importers.List{
+				`"net/netip"`,
+				`"github.com/stephenafamo/bob/types"`,
+			},
 			RandomExpr: `var addr [4]byte
                 rand.Read(addr[:])
-                return any(netip.AddrFrom4(addr)).(T)`,
+                ipAddr := netip.AddrFrom4(addr)
+                return types.Text[netip.Addr, *netip.Addr]{Val: ipAddr}`,
 			RandomExprImports: importers.List{`"crypto/rand"`},
 		},
-		"net.HardwareAddr": {
-			Imports: importers.List{`"net"`},
+		"pgtypes.Inet": {
+			Imports: importers.List{
+				`"github.com/stephenafamo/bob/types/pgtypes"`,
+			},
+			RandomExpr: `var addr [4]byte
+                rand.Read(addr[:])
+                ipAddr := netip.AddrFrom4(addr)
+                ipPrefix := netip.PrefixFrom(ipAddr, f.IntBetween(0, ipAddr.BitLen()))
+                return pgtypes.Inet{Prefix: ipPrefix}`,
+			RandomExprImports: importers.List{`"crypto/rand"`},
+		},
+		"pgtypes.Macaddr": {
+			Imports: importers.List{`"github.com/stephenafamo/bob/types/pgtypes"`},
 			RandomExpr: `addr, _ := net.ParseMAC(f.Internet().MacAddress())
-                return any(addr).(T)`,
-			CompareExpr:        `slices.Equal(AAA, BBB)`,
+                return pgtypes.Macaddr{Addr: addr}`,
+			RandomExprImports:  importers.List{`"net"`},
+			CompareExpr:        `slices.Equal(AAA.Addr, BBB.Addr)`,
 			CompareExprImports: importers.List{`"slices"`},
 		},
 		"pq.BoolArray": {
@@ -226,7 +297,7 @@ func Types() drivers.Types {
                 for i := range arr {
                     arr[i] = f.Bool()
                 }
-                return any(arr).(T)`,
+                return arr`,
 			NoRandomizationTest: true,
 		},
 		"pq.Int64Array": {
@@ -235,29 +306,31 @@ func Types() drivers.Types {
                 for i := range arr {
                     arr[i] = f.Int64()
                 }
-                return any(arr).(T)`,
+                return arr`,
 			CompareExpr:        `slices.Equal(AAA, BBB)`,
 			CompareExprImports: importers.List{`"slices"`},
 		},
 		"pq.ByteaArray": {
-			Imports: importers.List{`"github.com/lib/pq"`},
+			DependsOn: []string{"[]byte"},
+			Imports:   importers.List{`"github.com/lib/pq"`},
 			RandomExpr: `arr := make(pq.ByteaArray, f.IntBetween(1, 5))
                 for i := range arr {
-                    arr[i] = random[[]byte](f)
+                    arr[i] = random___byte(f)
                 }
-                return any(arr).(T)`,
+                return arr`,
 			CompareExpr: `slices.EqualFunc(AAA, BBB, func(a, b []byte) bool {
                 return bytes.Equal(a, b)
             })`,
 			CompareExprImports: importers.List{`"slices"`, `"bytes"`},
 		},
 		"pq.StringArray": {
-			Imports: importers.List{`"github.com/lib/pq"`},
+			DependsOn: []string{"string"},
+			Imports:   importers.List{`"github.com/lib/pq"`},
 			RandomExpr: `arr := make(pq.StringArray, f.IntBetween(1, 5))
                 for i := range arr {
-                    arr[i] = random[string](f)
+                    arr[i] = random_string(f)
                 }
-                return any(arr).(T)`,
+                return arr`,
 			CompareExpr:        `slices.Equal(AAA, BBB)`,
 			CompareExprImports: importers.List{`"slices"`},
 		},
@@ -267,52 +340,72 @@ func Types() drivers.Types {
                 for i := range arr {
                     arr[i] = f.Float64()
                 }
-                return any(arr).(T)`,
+                return arr`,
 			CompareExpr:        `slices.Equal(AAA, BBB)`,
 			CompareExprImports: importers.List{`"slices"`},
 		},
 		"pgeo.Box": {
 			Imports:    importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr: `return any(pgeo.NewRandBox()).(T)`,
+			RandomExpr: `return pgeo.NewRandBox()`,
 		},
 		"pgeo.Circle": {
 			Imports:    importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr: `return any(pgeo.NewRandCircle()).(T)`,
+			RandomExpr: `return pgeo.NewRandCircle()`,
 		},
 		"pgeo.Line": {
 			Imports:    importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr: `return any(pgeo.NewRandLine()).(T)`,
+			RandomExpr: `return pgeo.NewRandLine()`,
 		},
 		"pgeo.Lseg": {
 			Imports:    importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr: `return any(pgeo.NewRandLseg()).(T)`,
+			RandomExpr: `return pgeo.NewRandLseg()`,
 		},
 		"pgeo.Path": {
 			Imports:     importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr:  `return any(pgeo.NewRandPath()).(T)`,
+			RandomExpr:  `return pgeo.NewRandPath()`,
 			CompareExpr: `AAA.Closed == BBB.Closed && slices.Equal(AAA.Points, BBB.Points)`,
 		},
 		"pgeo.Point": {
 			Imports:    importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr: `return any(pgeo.NewRandPoint()).(T)`,
+			RandomExpr: `return pgeo.NewRandPoint()`,
 		},
 		"pgeo.Polygon": {
 			Imports:            importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr:         `return any(pgeo.NewRandPolygon()).(T)`,
+			RandomExpr:         `return pgeo.NewRandPolygon()`,
 			CompareExpr:        `slices.Equal(AAA, BBB)`,
 			CompareExprImports: importers.List{`"slices"`},
 		},
 		"decimal.Decimal": {
 			Imports:    importers.List{`"github.com/shopspring/decimal"`},
-			RandomExpr: `return any(decimal.New(f.Int64Between(0, 1000), 0)).(T)`,
+			RandomExpr: `return decimal.New(f.Int64Between(0, 1000), 0)`,
 		},
-		"types.HStore": {
-			Imports: importers.List{`"github.com/stephenafamo/bob/types"`},
-			RandomExpr: `hs := make(types.HStore)
-                for i := 0; i < f.IntBetween(1, 5); i++ {
-                    arr[random[string](f)] = randomNull[string](f)
+		"pgtypes.LSN": {
+			Imports:    importers.List{`"github.com/stephenafamo/bob/types/pgtypes"`},
+			RandomExpr: `return pgtypes.LSN(f.UInt64())`,
+		},
+		"pgtypes.TxIDSnapshot": {
+			Imports: importers.List{`"github.com/stephenafamo/bob/types/pgtypes"`},
+			RandomExpr: `active := make([]string, f.IntBetween(1, 5))
+                for i := range active {
+                    active[i] = strconv.FormatUint(f.UInt64(), 10)
                 }
-                return any(hs).(T)`,
+                return pgtypes.TxIDSnapshot{
+                    Min: strconv.FormatUint(f.UInt64(), 10),
+                    Max: strconv.FormatUint(f.UInt64(), 10),
+                    Active: active,
+                }`,
+			RandomExprImports:  importers.List{`"strconv"`},
+			CompareExpr:        `AAA.Min == BBB.Min && AAA.Max == BBB.Max && slices.Equal(AAA.Active, BBB.Active)`,
+			CompareExprImports: importers.List{`"slices"`},
+		},
+		"pgtypes.HStore": {
+			DependsOn: []string{"string"},
+			Imports:   importers.List{`"github.com/stephenafamo/bob/types/pgtypes"`},
+			RandomExpr: `hs := make(pgtypes.HStore)
+                for i := 0; i < f.IntBetween(1, 5); i++ {
+                    arr[random_string(f)] = null.FromCond(random_string(f), f.Bool())
+                }
+                return hs`,
 		},
 		"types.JSON[json.RawMessage]": {
 			Imports: importers.List{
@@ -328,10 +421,17 @@ func Types() drivers.Types {
                     fmt.Fprintf(s, "%q:%q", f.Lorem().Word(), f.Lorem().Word())
                 }
                 s.WriteRune('}')
-                return any(types.NewJSON[json.RawMessage](s.Bytes())).(T)`,
+                return types.NewJSON[json.RawMessage](s.Bytes())`,
 			RandomExprImports:  importers.List{`"fmt"`, `"bytes"`},
 			CompareExpr:        `bytes.Equal(AAA.Val, BBB.Val)`,
 			CompareExprImports: importers.List{`"bytes"`},
+		},
+		"xml": {
+			AliasOf:   "string",
+			DependsOn: []string{"string"},
+			RandomExpr: `tag := f.Lorem().Word()
+      return fmt.Sprintf("<%s>%s</%s>", tag, f.Lorem().Word(), tag)`,
+			RandomExprImports: importers.List{`"fmt"`},
 		},
 	}
 }

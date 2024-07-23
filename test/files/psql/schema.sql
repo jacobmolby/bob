@@ -9,8 +9,8 @@ drop view if exists user_videos;
 drop view if exists type_monsters_v;
 drop materialized view if exists type_monsters_mv;
 
-drop type if exists workday;
-create type workday as enum('monday', 'tuesday', 'wednesday', 'thursday', 'friday');
+drop type if exists unicode_enum;
+create type unicode_enum as enum ('hello', 'привет', 'こんにちは', '안녕하세요', 'hello_with_underscore');
 
 drop domain if exists uint3;
 create domain uint3 as numeric check(value >= 0 and value < power(2::numeric, 3::numeric));
@@ -70,8 +70,8 @@ create domain my_int_array as int[];
 create table type_monsters (
 	id serial primary key not null,
 
-	enum_use        workday not null,
-	enum_nullable   workday,
+	enum_use        unicode_enum not null,
+	enum_nullable   unicode_enum,
 
 	bool_zero   bool,
 	bool_one    bool null,
@@ -252,8 +252,8 @@ create table type_monsters (
 	jsonarr_null     json[] null,
 	jsonarr_nnull    json[] not null,
 
-    enumarr_null   workday[] null,
-	enumarr_nnull  workday[] not null,
+    enumarr_null   unicode_enum[] null,
+	enumarr_nnull  unicode_enum[] not null,
 
 	customarr_null   my_int_array null,
 	customarr_nnull  my_int_array not null,
@@ -273,3 +273,15 @@ inner join videos v on v.user_id = u.id;
 
 create view type_monsters_v as select * from type_monsters; 
 create materialized view type_monsters_mv as select * from type_monsters_v;
+
+CREATE TABLE test_index_expressions (
+    col1 int,
+    col2 int,
+    col3 int
+);
+CREATE INDEX idx1 ON test_index_expressions ((col1 + col2));
+CREATE INDEX idx2 ON test_index_expressions ((col1 + col2), col3);
+CREATE INDEX idx3 ON test_index_expressions (col1, (col2 + col3));
+CREATE INDEX idx4 ON test_index_expressions (col3);
+CREATE INDEX idx5 ON test_index_expressions (col1 DESC, col2 DESC);
+CREATE INDEX idx6 ON test_index_expressions (POW(col3, 2));

@@ -39,14 +39,16 @@ func (d *driver) translateColumnType(c drivers.Column, info colInfo) drivers.Col
 		c.Type = "int16"
 	case "smallserial":
 		c.Type = "uint16"
-	case "decimal", "numeric":
+	case "decimal", "numeric", "money":
 		c.Type = "decimal.Decimal"
 	case "double precision":
 		c.Type = "float64"
 	case "real":
 		c.Type = "float32"
-	case "bit", "interval", "uuint", "bit varying", "character", "money", "character varying", "text", "xml":
+	case "bit", "interval", "uuint", "bit varying", "character", "character varying", "text":
 		c.Type = "string"
+	case "xml":
+		c.Type = "xml"
 	case "json", "jsonb":
 		c.Type = "types.JSON[json.RawMessage]"
 	case "bytea":
@@ -71,15 +73,21 @@ func (d *driver) translateColumnType(c drivers.Column, info colInfo) drivers.Col
 		c.Type = "pgeo.Polygon"
 	case "uuid":
 		c.Type = "uuid.UUID"
-	case "inet", "cidr":
-		c.Type = "netip.Addr"
-	case "macaddr":
-		c.Type = "net.HardwareAddr"
+	case "inet":
+		c.Type = "pgtypes.Inet"
+	case "cidr":
+		c.Type = "types.Text[netip.Addr, *netip.Addr]"
+	case "macaddr", "macaddr8":
+		c.Type = "pgtypes.Macaddr"
+	case "pg_lsn":
+		c.Type = "pgtypes.LSN"
+	case "txid_snapshot":
+		c.Type = "pgtypes.TxIDSnapshot"
 	case "ENUM":
 		c.Type = "string"
 		for _, e := range d.enums {
 			if e.Schema == info.UDTSchema && e.Name == info.UDTName {
-				c.Type = helpers.AddPgEnumType(d.types, e.Type)
+				c.Type = helpers.EnumType(d.types, e.Type)
 			}
 		}
 	case "ARRAY":
@@ -90,7 +98,7 @@ func (d *driver) translateColumnType(c drivers.Column, info colInfo) drivers.Col
 	case "USER-DEFINED":
 		switch info.UDTName {
 		case "hstore":
-			c.Type = "types.HStore"
+			c.Type = "pgtypes.HStore"
 			c.DBType = "hstore"
 		case "citext":
 			c.Type = "string"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"sort"
 
 	"github.com/lib/pq"
@@ -14,6 +15,8 @@ import (
 	"github.com/stephenafamo/scan/stdscan"
 	"github.com/volatiletech/strmangle"
 )
+
+var rgxValidColumnName = regexp.MustCompile(`(?i)^[a-z_][a-z0-9_]*$`)
 
 type (
 	Interface = drivers.Interface[any]
@@ -78,12 +81,12 @@ func New(config Config) Interface {
 	case "google":
 		types["uuid.UUID"] = drivers.Type{
 			Imports:    importers.List{`"github.com/google/uuid"`},
-			RandomExpr: `return any(uuid.New()).(T)`,
+			RandomExpr: `return uuid.New()`,
 		}
 	default:
 		types["uuid.UUID"] = drivers.Type{
 			Imports:    importers.List{`"github.com/gofrs/uuid/v5"`},
-			RandomExpr: `return any(uuid.Must(uuid.NewV4())).(T)`,
+			RandomExpr: `return uuid.Must(uuid.NewV4())`,
 		}
 	}
 
@@ -418,4 +421,53 @@ func (d *driver) loadEnums(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (d *driver) Indexes(ctx context.Context) (drivers.DBIndexes, error) {
+	ret := drivers.DBIndexes{}
+
+	query := `SELECT
+	n.nspname AS schema_name,
+	t.relname AS table_name,
+	i.relname AS index_name,
+	ARRAY(
+		SELECT pg_get_indexdef(x.indexrelid, k + 1, true)
+		FROM generate_subscripts(x.indkey, 1) as k
+		ORDER BY k
+	) AS index_cols
+	FROM pg_index x
+	JOIN pg_class t ON t.oid = x.indrelid
+	JOIN pg_class i ON i.oid = x.indexrelid
+	JOIN pg_namespace n ON n.oid = t.relnamespace
+	WHERE n.nspname = ANY($1)
+	ORDER BY n.nspname, t.relname, i.relname`
+
+	type indexColumns struct {
+		SchemaName string
+		TableName  string
+		IndexName  string
+		IndexCols  pq.StringArray // a list of column names and/or expressions
+	}
+	res, err := stdscan.All(ctx, d.conn, scan.StructMapper[indexColumns](), query, d.config.Schemas)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range res {
+		key := r.TableName
+		if r.SchemaName != "" && r.SchemaName != d.config.SharedSchema {
+			key = r.SchemaName + "." + r.TableName
+		}
+		var index drivers.Index
+		index.Name = r.IndexName
+		for _, colName := range r.IndexCols {
+			if rgxValidColumnName.MatchString(colName) {
+				index.Columns = append(index.Columns, colName)
+			} else {
+				index.Expressions = append(index.Expressions, colName)
+			}
+		}
+		ret[key] = append(ret[key], index)
+	}
+
+	return ret, nil
 }

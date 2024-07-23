@@ -36,6 +36,14 @@ var (
 	MySQLModelTemplates, _  = fs.Sub(mysqlTemplates, "bobgen-mysql/templates/models")
 	SQLiteModelTemplates, _ = fs.Sub(sqliteTemplates, "bobgen-sqlite/templates/models")
 	PrismaModelTemplates, _ = fs.Sub(prismaTemplates, "bobgen-prisma/templates/models")
+	typesReplacer           = strings.NewReplacer(
+		" ", "_",
+		".", "_",
+		",", "_",
+		"*", "_",
+		"[", "_",
+		"]", "_",
+	)
 )
 
 type Importer map[string]struct{}
@@ -220,19 +228,19 @@ var templateFunctions = template.FuncMap{
 	"ignore":             strmangle.Ignore,
 	"generateTags":       strmangle.GenerateTags,
 	"generateIgnoreTags": strmangle.GenerateIgnoreTags,
+	"normalizeType":      NormalizeType,
 	"enumVal": func(val string) string {
-		val = strmangle.TitleCase(val)
-
 		var newval strings.Builder
 		for _, r := range val {
-			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) {
 				newval.WriteRune(r)
 				continue
 			}
 			newval.WriteString(fmt.Sprintf("U%x", r))
 		}
 
-		return newval.String()
+		// Title case after doing unicode replacements or they will be stripped
+		return strmangle.TitleCase(newval.String())
 	},
 	"dbTag": func(t drivers.Table, c drivers.Column) string {
 		tag := c.Name
@@ -657,4 +665,8 @@ func inList[T comparable](s []T, val T) bool {
 	}
 
 	return false
+}
+
+func NormalizeType(val string) string {
+	return typesReplacer.Replace(val)
 }

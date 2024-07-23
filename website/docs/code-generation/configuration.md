@@ -16,8 +16,10 @@ The configuration is marshalled in to the [Config struct](https://pkg.go.dev/git
 type Config struct {
 	// Struct tags to generate
 	Tags []string `yaml:"tags"`
-	// Disable generating factory for models.
+	// Disable generating factories for models
 	NoFactory bool `yaml:"no_factory"`
+	// Disable generating go test files
+	NoTests bool `yaml:"no_tests"`
 	// Disable back referencing in the loaded relationship structs
 	NoBackReferencing bool `yaml:"no_back_referencing"`
 	// Delete the output folder (rm -rf) before generation to ensure sanity
@@ -47,7 +49,8 @@ type Config struct {
 | Name                | Description                                                                                                     | Default |
 | ------------------- | --------------------------------------------------------------------------------------------------------------- | ------- |
 | tags                | Struct tags to generate                                                                                         | []      |
-| no_factory          | Disable generation factories for models                                                                         | false   |
+| no_factory          | Disable generating factories for models                                                                         | false   |
+| no_tests            | Disable generating go test files                                                                                | false   |
 | no_back_referencing | If this is set to true, when relationships are loaded, the parent is not added to the loaded object's relations | false   |
 | wipe                | If to delete the output folder before generation                                                                | false   |
 | struct_tag_casing   | Decides the casing for go structure tag names. camel, title or snake (default snake)                            | "snake" |
@@ -86,7 +89,7 @@ aliases:
 Custom types can be registered with the `types` key.  
 This will also allow you to edit the configuration of existing types, for example, to change how it is randomized by default.
 
-When defining a type, you should provide the `randomExpr`. This is an expression that returns a random value of the type. It is used in `factory.random[T]()`.
+When defining a type, you should provide the `randomExpr`. This is an expression that returns a random value of the type. It is used in `factory.random_type()`.
 
 There are things to note about writing the random expression:
 
@@ -100,16 +103,25 @@ In such cases, you can provide a `compareExpr` which is an expression that compa
 
 ```yaml
 types:
+  xml:
+    # OPTIONAL: If this type is an alias of another type
+    # this is useful to have custom randomization for a type e.g. xml
+    alias_of: "string"
+    # If this depends on another type, you can specify the type here
+    depends_on:
+      - "string"
+    # The random expression for this type
+    random_expr: |-
+      tag := f.Lorem().Word()
+      return fmt.Sprintf("<%s>%s</%s>", tag, f.Lorem().Word(), tag)
   type.JSON[json.RawMessage]:
     # If true, a test for the random expression will not be generated
     no_randomization_test: false
     imports:
       - '"encoding/json"'
       - '"github.com/stephenafamo/bob/types"'
-    # To be used in factory.random[T]
+    # To be used in factory.random_type
     # a variable `f` of type `faker.Faker` is available
-    # since this is in a generic function, the final return should be like
-    # return any(yourVariableOrExpressions).(T)
     random_expr: |-
       s := &bytes.Buffer{}
       s.WriteRune('{')
@@ -120,7 +132,7 @@ types:
           fmt.Fprintf(s, "%q:%q", f.Lorem().Word(), f.Lorem().Word())
       }
       s.WriteRune('}')
-      return any(types.NewJSON[json.RawMessage](s.Bytes())).(T)`
+      return types.NewJSON[json.RawMessage](s.Bytes())`
     # Imports for the random expression
     random_expr_imports:
       - '"bytes"'

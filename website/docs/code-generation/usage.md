@@ -1,8 +1,6 @@
 ---
-
 sidebar_position: 3
 description: How to use the Generated Models
-
 ---
 
 # Usage
@@ -74,9 +72,9 @@ var JetsTable = psql.NewTablex[*Jet, JetSlice, *JetSetter]("", "jets")
 
 **JetsTable** gives the full range of capabilites of a Bob model, including
 
-* Flexible queries: One, All, Cursor, Count, Exists
-* Expressions for names and column lists
-* Hooks
+- Flexible queries: One, All, Cursor, Count, Exists
+- Expressions for names and column lists
+- Hooks
 
 [Read the documentation to see how to use](../models/table)
 
@@ -181,7 +179,7 @@ To fluently build type safe queries, mods are generated to easily add `WHERE` fi
 
 ```go
 // SELECT * FROM "jets" WHERE "jets"."id" = 100
-models.Jets(
+models.Jets.Query(
     ctx, db,
     models.SelectWhere.Jets.ID.EQ(100),
 )
@@ -194,7 +192,7 @@ Where filters can be combined using `WhereOr` and `WhereAnd`. These can be neste
 // WHERE "users"."name" IS NULL
 // OR "users"."email" IS NOT NULL
 // OR ("users"."age" > 21 AND "users"."location" IS NOT NULL)
-users, err := models.Users(
+users, err := models.Users.Query(
     ctx, db,
     psql.WhereOr(
         models.SelectWhere.Users.Name.IsNull(),
@@ -207,7 +205,17 @@ users, err := models.Users(
 ).All()
 ```
 
-Since each query type has its own mods, `SelectWhere`,  `InsertWhere`, `UpdateWhere` and `DeleteWhere` are all generated.
+Since each query type has its own mods, `SelectWhere`, `InsertWhere`, `UpdateWhere` and `DeleteWhere` are all generated.
+
+:::tip
+
+To use these filters with an aliased table name, use the `AliasedAs` method.
+
+```go
+models.SelectWhere.Users.AliasedAs("u").Name.IsNull()
+```
+
+:::
 
 ### Join Helpers
 
@@ -217,14 +225,24 @@ To make joining tables easier, join helpers are generated for each table. The ge
 // SELECT * FROM "jets"
 // INNER JOIN "pilots" ON "pilots"."id" = "jets"."pilot_id"
 // INNER JOIN "airports" ON "airports"."id" = "jets"."airport_id"
-models.Jets(
+models.Jets.Query(
     ctx, db,
-    models.SelectJoins.Jets.InnerJoin.Pilots,
-    models.SelectJoins.Jets.InnerJoin.Airports,
+    models.SelectJoins.Jets.InnerJoin.Pilots(ctx),
+    models.SelectJoins.Jets.InnerJoin.Airports(ctx),
 ).All()
 ```
 
-Since each query type has its own mods, `SelectJoins`,  `InsertJoins`, `UpdateJoins` and `DeleteJoins` are all generated.
+Since each query type has its own mods, `SelectJoins`, `InsertJoins`, `UpdateJoins` and `DeleteJoins` are all generated.
+
+:::tip
+
+To use these join mods with an aliased table name, use the `AliasedAs` method.
+
+```go
+models.SelectJoins.Jets.AliasedAs("j").InnerJoin.Airports(ctx).AliasedAs("a")
+```
+
+:::
 
 ### Column Expressions
 
@@ -243,5 +261,15 @@ psql.Select(
 )
 
 ```
+
+:::tip
+
+To use these expressions with an aliased table name, use the `AliasedAs` method.
+
+```go
+models.JetColumns.AliasedAs("j").Name.IsNull()
+```
+
+:::
 
 [^1]: Some are technically just global variables. But they are never mutated by Bob, or expected to be mutated by the user.

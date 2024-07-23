@@ -52,12 +52,12 @@ func New(config Config, fs fs.FS) Interface {
 	case "google":
 		types["uuid.UUID"] = drivers.Type{
 			Imports:    importers.List{`"github.com/google/uuid"`},
-			RandomExpr: `return any(uuid.New()).(T)`,
+			RandomExpr: `return uuid.New()`,
 		}
 	default:
 		types["uuid.UUID"] = drivers.Type{
 			Imports:    importers.List{`"github.com/gofrs/uuid/v5"`},
-			RandomExpr: `return any(uuid.Must(uuid.NewV4())).(T)`,
+			RandomExpr: `return uuid.Must(uuid.NewV4())`,
 		}
 	}
 
@@ -174,6 +174,7 @@ func (d *driver) tables(realm *schema.Realm) []drivers.Table {
 					Foreign: fks,
 				},
 				Columns: d.tableColumns(atlasTable, colFilter),
+				Indexes: d.indexes(atlasTable, colFilter),
 			}
 			tables = append(tables, table)
 		}
@@ -347,7 +348,7 @@ func (d *driver) translateColumnType(c drivers.Column, tableKey string, typ sche
 		}
 
 		if enum, ok := d.enums[enumName]; ok {
-			c.Type = enum.Type
+			c.Type = helpers.EnumType(d.types, enum.Type)
 		} else {
 			c.Type = "string"
 		}
@@ -539,4 +540,76 @@ func (p *driver) getEnums() []drivers.Enum {
 	})
 
 	return enums
+}
+
+func (d *driver) indexes(table *schema.Table, colFilter drivers.ColumnFilter) []drivers.Index {
+	var indexes []drivers.Index //nolint:prealloc
+
+	filter := colFilter[d.key(table.Schema.Name, table.Name)]
+	only := filter.Only
+	except := filter.Except
+
+	if table.PrimaryKey != nil && len(table.PrimaryKey.Parts) > 0 {
+		var pkName string
+		var shouldSkip bool
+
+		cols := make([]string, len(table.PrimaryKey.Parts))
+		for i, part := range table.PrimaryKey.Parts {
+			if part.X != nil || drivers.Skip(part.C.Name, only, except) {
+				shouldSkip = true
+			}
+			cols[i] = part.C.Name
+		}
+		pkName = d.makePkName(table)
+
+		if !shouldSkip && pkName != "" {
+			indexes = append(indexes, drivers.Index{
+				Name:    pkName,
+				Columns: cols,
+			})
+		}
+	}
+
+	for _, index := range table.Indexes {
+		shouldSkip := false
+		cols := make([]string, len(index.Parts))
+		for i, part := range index.Parts {
+			if part.X != nil || drivers.Skip(part.C.Name, only, except) {
+				shouldSkip = true
+			}
+			cols[i] = part.C.Name
+		}
+		if shouldSkip {
+			continue
+		}
+		indexes = append(indexes, drivers.Index{
+			Name:    index.Name,
+			Columns: cols,
+		})
+	}
+
+	return indexes
+}
+
+func (d *driver) makePkName(table *schema.Table) string {
+	if table.PrimaryKey.Name != "" {
+		return table.PrimaryKey.Name
+	}
+	switch d.Dialect() {
+	case "psql":
+		return table.Name + "_pkey"
+	case "mysql":
+		return "PRIMARY"
+	case "sqlite":
+		isCompositePrimaryKey := len(table.PrimaryKey.Parts) > 1
+		isIntegerColumnType := false
+		typ, ok := table.PrimaryKey.Parts[0].C.Type.Type.(*schema.IntegerType)
+		if ok {
+			isIntegerColumnType = typ.T == "integer"
+		}
+		if isCompositePrimaryKey || !isIntegerColumnType {
+			return "sqlite_autoindex_" + table.Name + "_1"
+		}
+	}
+	return ""
 }

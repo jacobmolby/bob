@@ -17,6 +17,15 @@
 					"type": "int32"
 				}
 			],
+			"indexes": [
+				{
+					"name": "sponsors_pkey",
+					"columns": [
+						"id"
+					],
+					"expressions": null
+				}
+			],
 			"constraints": {
 				"primary": {
 					"name": "sponsors_pkey",
@@ -45,6 +54,15 @@
 					"type": "int32"
 				}
 			],
+			"indexes": [
+				{
+					"name": "tags_pkey",
+					"columns": [
+						"id"
+					],
+					"expressions": null
+				}
+			],
 			"constraints": {
 				"primary": {
 					"name": "tags_pkey",
@@ -52,6 +70,100 @@
 						"id"
 					]
 				},
+				"foreign": null,
+				"uniques": null
+			}
+		},
+		{
+			"key": "test_index_expressions",
+			"schema": "",
+			"name": "test_index_expressions",
+			"columns": [
+				{
+					"name": "col1",
+					"db_type": "integer",
+					"default": "NULL",
+					"comment": "",
+					"nullable": true,
+					"generated": false,
+					"autoincr": false,
+					"domain_name": "",
+					"type": "int32"
+				},
+				{
+					"name": "col2",
+					"db_type": "integer",
+					"default": "NULL",
+					"comment": "",
+					"nullable": true,
+					"generated": false,
+					"autoincr": false,
+					"domain_name": "",
+					"type": "int32"
+				},
+				{
+					"name": "col3",
+					"db_type": "integer",
+					"default": "NULL",
+					"comment": "",
+					"nullable": true,
+					"generated": false,
+					"autoincr": false,
+					"domain_name": "",
+					"type": "int32"
+				}
+			],
+			"indexes": [
+				{
+					"name": "idx1",
+					"columns": null,
+					"expressions": [
+						"(col1 + col2)"
+					]
+				},
+				{
+					"name": "idx2",
+					"columns": [
+						"col3"
+					],
+					"expressions": [
+						"(col1 + col2)"
+					]
+				},
+				{
+					"name": "idx3",
+					"columns": [
+						"col1"
+					],
+					"expressions": [
+						"(col2 + col3)"
+					]
+				},
+				{
+					"name": "idx4",
+					"columns": [
+						"col3"
+					],
+					"expressions": null
+				},
+				{
+					"name": "idx5",
+					"columns": [
+						"col1",
+						"col2"
+					],
+					"expressions": null
+				},
+				{
+					"name": "idx6",
+					"columns": null,
+					"expressions": [
+						"pow(col3::double precision, 2::double precision)"
+					]
+				}
+			],
+			"constraints": {
+				"primary": null,
 				"foreign": null,
 				"uniques": null
 			}
@@ -81,7 +193,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "Workday"
+					"type": "UnicodeEnum"
 				},
 				{
 					"name": "enum_nullable",
@@ -92,7 +204,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "Workday"
+					"type": "UnicodeEnum"
 				},
 				{
 					"name": "bool_zero",
@@ -1247,7 +1359,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "netip.Addr"
+					"type": "types.Text[netip.Addr, *netip.Addr]"
 				},
 				{
 					"name": "cidr_nnull",
@@ -1258,7 +1370,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "netip.Addr"
+					"type": "types.Text[netip.Addr, *netip.Addr]"
 				},
 				{
 					"name": "circle_null",
@@ -1313,7 +1425,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "netip.Addr"
+					"type": "pgtypes.Inet"
 				},
 				{
 					"name": "inet_nnull",
@@ -1324,7 +1436,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "netip.Addr"
+					"type": "pgtypes.Inet"
 				},
 				{
 					"name": "line_null",
@@ -1379,7 +1491,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "net.HardwareAddr"
+					"type": "pgtypes.Macaddr"
 				},
 				{
 					"name": "macaddr_nnull",
@@ -1390,7 +1502,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "net.HardwareAddr"
+					"type": "pgtypes.Macaddr"
 				},
 				{
 					"name": "money_null",
@@ -1401,7 +1513,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "decimal.Decimal"
 				},
 				{
 					"name": "money_nnull",
@@ -1412,7 +1524,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "decimal.Decimal"
 				},
 				{
 					"name": "path_null",
@@ -1445,7 +1557,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "pgtypes.LSN"
 				},
 				{
 					"name": "pg_lsn_nnull",
@@ -1456,7 +1568,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "pgtypes.LSN"
 				},
 				{
 					"name": "point_null",
@@ -1555,7 +1667,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "pgtypes.TxIDSnapshot"
 				},
 				{
 					"name": "txid_nnull",
@@ -1566,7 +1678,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "pgtypes.TxIDSnapshot"
 				},
 				{
 					"name": "xml_null",
@@ -1577,7 +1689,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "xml"
 				},
 				{
 					"name": "xml_nnull",
@@ -1588,7 +1700,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "xml"
 				},
 				{
 					"name": "intarr_null",
@@ -1665,7 +1777,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "parray.Array[decimal.Decimal]"
+					"type": "pgtypes.Array[decimal.Decimal]"
 				},
 				{
 					"name": "decimalarr_nnull",
@@ -1676,7 +1788,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "parray.Array[decimal.Decimal]"
+					"type": "pgtypes.Array[decimal.Decimal]"
 				},
 				{
 					"name": "byteaarr_null",
@@ -1746,25 +1858,25 @@
 				},
 				{
 					"name": "enumarr_null",
-					"db_type": "_workday[]",
+					"db_type": "_unicode_enum[]",
 					"default": "NULL",
 					"comment": "",
 					"nullable": true,
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "parray.EnumArray[Workday]"
+					"type": "pgtypes.EnumArray[UnicodeEnum]"
 				},
 				{
 					"name": "enumarr_nnull",
-					"db_type": "_workday[]",
+					"db_type": "_unicode_enum[]",
 					"default": "",
 					"comment": "",
 					"nullable": false,
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "parray.EnumArray[Workday]"
+					"type": "pgtypes.EnumArray[UnicodeEnum]"
 				},
 				{
 					"name": "customarr_null",
@@ -1833,6 +1945,15 @@
 					"type": "string"
 				}
 			],
+			"indexes": [
+				{
+					"name": "type_monsters_pkey",
+					"columns": [
+						"id"
+					],
+					"expressions": null
+				}
+			],
 			"constraints": {
 				"primary": {
 					"name": "type_monsters_pkey",
@@ -1849,6 +1970,7 @@
 			"schema": "",
 			"name": "type_monsters_mv",
 			"columns": null,
+			"indexes": null,
 			"constraints": {
 				"primary": null,
 				"foreign": null,
@@ -1880,7 +2002,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "Workday"
+					"type": "UnicodeEnum"
 				},
 				{
 					"name": "enum_nullable",
@@ -1891,7 +2013,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "Workday"
+					"type": "UnicodeEnum"
 				},
 				{
 					"name": "bool_zero",
@@ -3046,7 +3168,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "netip.Addr"
+					"type": "types.Text[netip.Addr, *netip.Addr]"
 				},
 				{
 					"name": "cidr_nnull",
@@ -3057,7 +3179,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "netip.Addr"
+					"type": "types.Text[netip.Addr, *netip.Addr]"
 				},
 				{
 					"name": "circle_null",
@@ -3112,7 +3234,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "netip.Addr"
+					"type": "pgtypes.Inet"
 				},
 				{
 					"name": "inet_nnull",
@@ -3123,7 +3245,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "netip.Addr"
+					"type": "pgtypes.Inet"
 				},
 				{
 					"name": "line_null",
@@ -3178,7 +3300,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "net.HardwareAddr"
+					"type": "pgtypes.Macaddr"
 				},
 				{
 					"name": "macaddr_nnull",
@@ -3189,7 +3311,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "net.HardwareAddr"
+					"type": "pgtypes.Macaddr"
 				},
 				{
 					"name": "money_null",
@@ -3200,7 +3322,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "decimal.Decimal"
 				},
 				{
 					"name": "money_nnull",
@@ -3211,7 +3333,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "decimal.Decimal"
 				},
 				{
 					"name": "path_null",
@@ -3244,7 +3366,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "pgtypes.LSN"
 				},
 				{
 					"name": "pg_lsn_nnull",
@@ -3255,7 +3377,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "pgtypes.LSN"
 				},
 				{
 					"name": "point_null",
@@ -3354,7 +3476,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "pgtypes.TxIDSnapshot"
 				},
 				{
 					"name": "txid_nnull",
@@ -3365,7 +3487,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "pgtypes.TxIDSnapshot"
 				},
 				{
 					"name": "xml_null",
@@ -3376,7 +3498,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "xml"
 				},
 				{
 					"name": "xml_nnull",
@@ -3387,7 +3509,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "string"
+					"type": "xml"
 				},
 				{
 					"name": "intarr_null",
@@ -3464,7 +3586,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "parray.Array[decimal.Decimal]"
+					"type": "pgtypes.Array[decimal.Decimal]"
 				},
 				{
 					"name": "decimalarr_nnull",
@@ -3475,7 +3597,7 @@
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "parray.Array[decimal.Decimal]"
+					"type": "pgtypes.Array[decimal.Decimal]"
 				},
 				{
 					"name": "byteaarr_null",
@@ -3545,25 +3667,25 @@
 				},
 				{
 					"name": "enumarr_null",
-					"db_type": "_workday[]",
+					"db_type": "_unicode_enum[]",
 					"default": "NULL",
 					"comment": "",
 					"nullable": true,
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "parray.EnumArray[Workday]"
+					"type": "pgtypes.EnumArray[UnicodeEnum]"
 				},
 				{
 					"name": "enumarr_nnull",
-					"db_type": "_workday[]",
+					"db_type": "_unicode_enum[]",
 					"default": "NULL",
 					"comment": "",
 					"nullable": true,
 					"generated": false,
 					"autoincr": false,
 					"domain_name": "",
-					"type": "parray.EnumArray[Workday]"
+					"type": "pgtypes.EnumArray[UnicodeEnum]"
 				},
 				{
 					"name": "customarr_null",
@@ -3632,6 +3754,7 @@
 					"type": "string"
 				}
 			],
+			"indexes": null,
 			"constraints": {
 				"primary": null,
 				"foreign": null,
@@ -3677,6 +3800,7 @@
 					"type": "int32"
 				}
 			],
+			"indexes": null,
 			"constraints": {
 				"primary": null,
 				"foreign": null,
@@ -3753,6 +3877,29 @@
 					"autoincr": false,
 					"domain_name": "",
 					"type": "int32"
+				}
+			],
+			"indexes": [
+				{
+					"name": "users_party_id_key",
+					"columns": [
+						"party_id"
+					],
+					"expressions": null
+				},
+				{
+					"name": "users_pkey",
+					"columns": [
+						"id"
+					],
+					"expressions": null
+				},
+				{
+					"name": "users_primary_email_key",
+					"columns": [
+						"primary_email"
+					],
+					"expressions": null
 				}
 			],
 			"constraints": {
@@ -3838,6 +3985,16 @@
 					"type": "int32"
 				}
 			],
+			"indexes": [
+				{
+					"name": "video_tags_pkey",
+					"columns": [
+						"video_id",
+						"tag_id"
+					],
+					"expressions": null
+				}
+			],
 			"constraints": {
 				"primary": {
 					"name": "video_tags_pkey",
@@ -3910,6 +4067,22 @@
 					"type": "int32"
 				}
 			],
+			"indexes": [
+				{
+					"name": "videos_pkey",
+					"columns": [
+						"id"
+					],
+					"expressions": null
+				},
+				{
+					"name": "videos_sponsor_id_key",
+					"columns": [
+						"sponsor_id"
+					],
+					"expressions": null
+				}
+			],
 			"constraints": {
 				"primary": {
 					"name": "videos_pkey",
@@ -3952,13 +4125,13 @@
 	],
 	"enums": [
 		{
-			"Type": "Workday",
+			"Type": "UnicodeEnum",
 			"Values": [
-				"monday",
-				"tuesday",
-				"wednesday",
-				"thursday",
-				"friday"
+				"hello",
+				"привет",
+				"こんにちは",
+				"안녕하세요",
+				"hello_with_underscore"
 			]
 		}
 	],

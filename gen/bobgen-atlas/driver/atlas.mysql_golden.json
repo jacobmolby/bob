@@ -83,6 +83,38 @@
 					"type": "int32"
 				}
 			],
+			"indexes": [
+				{
+					"name": "PRIMARY",
+					"columns": [
+						"id"
+					],
+					"expressions": null
+				},
+				{
+					"name": "one",
+					"columns": [
+						"one",
+						"two"
+					],
+					"expressions": null
+				},
+				{
+					"name": "something",
+					"columns": [
+						"something",
+						"another"
+					],
+					"expressions": null
+				},
+				{
+					"name": "sponsor_id",
+					"columns": [
+						"sponsor_id"
+					],
+					"expressions": null
+				}
+			],
 			"constraints": {
 				"primary": {
 					"name": "pk_multi_keys",
@@ -138,6 +170,15 @@
 					"type": "int32"
 				}
 			],
+			"indexes": [
+				{
+					"name": "PRIMARY",
+					"columns": [
+						"id"
+					],
+					"expressions": null
+				}
+			],
 			"constraints": {
 				"primary": {
 					"name": "pk_sponsors",
@@ -164,6 +205,15 @@
 					"autoincr": true,
 					"domain_name": "",
 					"type": "int32"
+				}
+			],
+			"indexes": [
+				{
+					"name": "PRIMARY",
+					"columns": [
+						"id"
+					],
+					"expressions": null
 				}
 			],
 			"constraints": {
@@ -1536,6 +1586,23 @@
 					"type": "string"
 				}
 			],
+			"indexes": [
+				{
+					"name": "PRIMARY",
+					"columns": [
+						"id"
+					],
+					"expressions": null
+				},
+				{
+					"name": "int_one",
+					"columns": [
+						"int_one",
+						"int_two"
+					],
+					"expressions": null
+				}
+			],
 			"constraints": {
 				"primary": {
 					"name": "pk_type_monsters",
@@ -1586,6 +1653,7 @@
 					"type": "int32"
 				}
 			],
+			"indexes": null,
 			"constraints": {
 				"primary": null,
 				"foreign": null,
@@ -1607,6 +1675,15 @@
 					"autoincr": true,
 					"domain_name": "",
 					"type": "int32"
+				}
+			],
+			"indexes": [
+				{
+					"name": "PRIMARY",
+					"columns": [
+						"id"
+					],
+					"expressions": null
 				}
 			],
 			"constraints": {
@@ -1646,6 +1723,23 @@
 					"autoincr": false,
 					"domain_name": "",
 					"type": "int32"
+				}
+			],
+			"indexes": [
+				{
+					"name": "PRIMARY",
+					"columns": [
+						"video_id",
+						"tag_id"
+					],
+					"expressions": null
+				},
+				{
+					"name": "tag_id",
+					"columns": [
+						"tag_id"
+					],
+					"expressions": null
 				}
 			],
 			"constraints": {
@@ -1718,6 +1812,29 @@
 					"autoincr": false,
 					"domain_name": "",
 					"type": "int32"
+				}
+			],
+			"indexes": [
+				{
+					"name": "PRIMARY",
+					"columns": [
+						"id"
+					],
+					"expressions": null
+				},
+				{
+					"name": "sponsor_id",
+					"columns": [
+						"sponsor_id"
+					],
+					"expressions": null
+				},
+				{
+					"name": "user_id",
+					"columns": [
+						"user_id"
+					],
+					"expressions": null
 				}
 			],
 			"constraints": {

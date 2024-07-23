@@ -25,17 +25,25 @@ type Interface[T any] interface {
 }
 
 type Type struct {
+	// If this type is an alias of another type
+	// this is useful to have custom randomization for a type e.g. xml
+	AliasOf string `yaml:"alias_of"`
+	// Imports needed for the type
 	Imports importers.List `yaml:"imports"`
-	// To be used in factory.random[T]
+	// Any other types that this type depends on
+	DependsOn []string `yaml:"depends_on"`
+	// To be used in factory.random_type
 	// a variable `f` of type `faker.Faker` is available
-	// since this is in a generic function, the final return should be like
-	// return any(yourVariableOrExpressions).(T)
 	RandomExpr string `yaml:"random_expr"`
 	// Additional imports for the randomize expression
 	RandomExprImports importers.List `yaml:"random_expr_imports"`
 	// Set this to true if the randomization should not be tested
 	// this is useful for low-cardinality types like bool
 	NoRandomizationTest bool `yaml:"no_randomization_test"`
+	// Set this to true if the test to see if the type implements
+	// the scanner and valuer interfaces should be skipped
+	// this is useful for types that are based on a primitive type
+	NoScannerValuerTest bool `yaml:"no_scanner_valuer_test"`
 	// CompareExpr is used to compare two values of this type
 	// if not provided, == is used
 	// Used AAA and BBB as placeholders for the two values
@@ -83,6 +91,9 @@ type Constructor interface {
 	// Load all constraints in the database, keyed by TableInfo.Key
 	Constraints(context.Context, ColumnFilter) (DBConstraints, error)
 
+	// Load all indexes in the database, keyed by TableInfo.Key
+	Indexes(ctx context.Context) (DBIndexes, error)
+
 	// Load basic info about all tables
 	TablesInfo(context.Context, Filter) (TablesInfo, error)
 	// Load details about a single table
@@ -121,6 +132,14 @@ func BuildDBInfo(ctx context.Context, c Constructor, concurrency int, only, exce
 		ret[i].Constraints.Primary = constraints.PKs[t.Key]
 		ret[i].Constraints.Foreign = constraints.FKs[t.Key]
 		ret[i].Constraints.Uniques = constraints.Uniques[t.Key]
+	}
+
+	indexes, err := c.Indexes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unable to load indexes: %w", err)
+	}
+	for i, t := range ret {
+		ret[i].Indexes = indexes[t.Key]
 	}
 
 	return ret, nil

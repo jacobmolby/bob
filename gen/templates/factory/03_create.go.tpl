@@ -1,6 +1,7 @@
 {{if .Table.Constraints.Primary}}
 {{$.Importer.Import "models" $.ModelsPackage}}
 {{$.Importer.Import "context"}}
+{{$.Importer.Import "testing"}}
 {{$.Importer.Import "github.com/stephenafamo/bob"}}
 {{$table := .Table}}
 {{$tAlias := .Aliases.Table $table.Key}}
@@ -8,15 +9,14 @@
 func ensureCreatable{{$tAlias.UpSingular}}(m *models.{{$tAlias.UpSingular}}Setter) {
 	{{range $column := $table.Columns -}}
   {{- if $column.Default}}{{continue}}{{end -}}
+  {{- if $column.Nullable}}{{continue}}{{end -}}
 	{{- if $column.Generated}}{{continue}}{{end -}}
-	{{$colAlias := $tAlias.Column $column.Name -}}
+	{{- $colAlias := $tAlias.Column $column.Name -}}
+  {{- $typDef :=  index $.Types $column.Type -}}
+  {{- $colTyp := or $typDef.AliasOf $column.Type -}}
 		if m.{{$colAlias}}.IsUnset() {
-			{{if $column.Nullable -}}
-          m.{{$colAlias}} = omitnull.FromNull(randomNull[{{$column.Type}}](nil))
-			{{- else -}}
-          m.{{$colAlias}} = omit.From(random[{{$column.Type}}](nil))
-			{{- end}}
-  }
+        m.{{$colAlias}} = omit.From(random_{{normalizeType $column.Type}}(nil))
+    }
 	{{end -}}
 }
 
@@ -104,6 +104,31 @@ func (o *{{$tAlias.UpSingular}}Template) Create(ctx context.Context, exec bob.Ex
 	return m, err
 }
 
+// MustCreate builds a {{$tAlias.DownSingular}} and inserts it into the database
+// Relations objects are also inserted and placed in the .R field
+// panics if an error occurs
+func (o *{{$tAlias.UpSingular}}Template) MustCreate(ctx context.Context, exec bob.Executor) *models.{{$tAlias.UpSingular}} {
+  _, m, err := o.create(ctx, exec)
+  if err != nil {
+    panic(err)
+  }
+	return m
+}
+
+// CreateOrFail builds a {{$tAlias.DownSingular}} and inserts it into the database
+// Relations objects are also inserted and placed in the .R field
+// It calls `tb.Fatal(err)` on the test/benchmark if an error occurs
+func (o *{{$tAlias.UpSingular}}Template) CreateOrFail(ctx context.Context, tb testing.TB, exec bob.Executor) *models.{{$tAlias.UpSingular}} {
+  tb.Helper()
+  _, m, err := o.create(ctx, exec)
+  if err != nil {
+    tb.Fatal(err)
+    return nil
+  }
+	return m
+}
+
+
 
 // create builds a {{$tAlias.DownSingular}} and inserts it into the database
 // Relations objects are also inserted and placed in the .R field
@@ -167,6 +192,30 @@ func (o *{{$tAlias.UpSingular}}Template) create(ctx context.Context, exec bob.Ex
 func (o {{$tAlias.UpSingular}}Template) CreateMany(ctx context.Context, exec bob.Executor, number int) (models.{{$tAlias.UpSingular}}Slice, error) {
   _, m, err := o.createMany(ctx, exec, number)
 	return m, err
+}
+
+// MustCreateMany builds multiple {{$tAlias.DownPlural}} and inserts them into the database
+// Relations objects are also inserted and placed in the .R field
+// panics if an error occurs
+func (o {{$tAlias.UpSingular}}Template) MustCreateMany(ctx context.Context, exec bob.Executor, number int) models.{{$tAlias.UpSingular}}Slice {
+  _, m, err := o.createMany(ctx, exec, number)
+  if err != nil {
+    panic(err)
+  }
+	return m
+}
+
+// CreateManyOrFail builds multiple {{$tAlias.DownPlural}} and inserts them into the database
+// Relations objects are also inserted and placed in the .R field
+// It calls `tb.Fatal(err)` on the test/benchmark if an error occurs
+func (o {{$tAlias.UpSingular}}Template) CreateManyOrFail(ctx context.Context, tb testing.TB, exec bob.Executor, number int) models.{{$tAlias.UpSingular}}Slice {
+  tb.Helper()
+  _, m, err := o.createMany(ctx, exec, number)
+  if err != nil {
+    tb.Fatal(err)
+    return nil
+  }
+	return m
 }
 
 
