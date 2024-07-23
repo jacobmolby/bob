@@ -25,6 +25,8 @@ type Function struct {
 	Filter []any
 	w      *clause.Window
 
+	Alias string
+
 	// For chain methods
 	expr.Chain[Expression, Expression]
 }
@@ -70,6 +72,11 @@ func (f Function) WriteSQL(w io.Writer, d bob.Dialect, start int) ([]any, error)
 		return nil, err
 	}
 	args = append(args, winargs...)
+
+	if len(f.Alias) > 0 {
+		w.Write([]byte(" AS "))
+		d.WriteQuoted(w, f.Alias)
+	}
 
 	return args, nil
 }

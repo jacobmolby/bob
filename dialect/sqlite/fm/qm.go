@@ -34,3 +34,9 @@ func Over() dialect.WindowMod[*dialect.Function] {
 	}
 	return m
 }
+
+func As(alias string) bob.Mod[*dialect.Function] {
+	return mods.QueryModFunc[*dialect.Function](func(f *dialect.Function) {
+		f.Alias = alias
+	})
+}
