@@ -1,0 +1,126 @@
+{
+	"tables": [
+		{
+			"key": "bar_baz",
+			"schema": "",
+			"name": "bar_baz",
+			"columns": [
+				{
+					"name": "id",
+					"db_type": "int",
+					"default": "AUTO_INCREMENT",
+					"comment": "",
+					"nullable": false,
+					"generated": false,
+					"autoincr": true,
+					"domain_name": "",
+					"type": "int32"
+				},
+				{
+					"name": "secret_col",
+					"db_type": "varchar",
+					"default": "",
+					"comment": "",
+					"nullable": false,
+					"generated": false,
+					"autoincr": false,
+					"domain_name": "",
+					"type": "string"
+				}
+			],
+			"indexes": [
+				{
+					"type": "BTREE",
+					"name": "PRIMARY",
+					"columns": [
+						{
+							"name": "id",
+							"desc": false,
+							"is_expression": false
+						}
+					],
+					"unique": true,
+					"comment": "",
+					"extra": null
+				}
+			],
+			"constraints": {
+				"primary": {
+					"name": "PRIMARY",
+					"columns": [
+						"id"
+					],
+					"comment": "",
+					"extra": null
+				},
+				"foreign": null,
+				"uniques": null,
+				"check": null
+			},
+			"comment": ""
+		},
+		{
+			"key": "bar_qux",
+			"schema": "",
+			"name": "bar_qux",
+			"columns": [
+				{
+					"name": "id",
+					"db_type": "int",
+					"default": "AUTO_INCREMENT",
+					"comment": "",
+					"nullable": false,
+					"generated": false,
+					"autoincr": true,
+					"domain_name": "",
+					"type": "int32"
+				},
+				{
+					"name": "secret_col",
+					"db_type": "varchar",
+					"default": "",
+					"comment": "",
+					"nullable": false,
+					"generated": false,
+					"autoincr": false,
+					"domain_name": "",
+					"type": "string"
+				}
+			],
+			"indexes": [
+				{
+					"type": "BTREE",
+					"name": "PRIMARY",
+					"columns": [
+						{
+							"name": "id",
+							"desc": false,
+							"is_expression": false
+						}
+					],
+					"unique": true,
+					"comment": "",
+					"extra": null
+				}
+			],
+			"constraints": {
+				"primary": {
+					"name": "PRIMARY",
+					"columns": [
+						"id"
+					],
+					"comment": "",
+					"extra": null
+				},
+				"foreign": null,
+				"uniques": null,
+				"check": null
+			},
+			"comment": ""
+		}
+	],
+	"query_folders": null,
+	"enums": null,
+	"extra_info": null,
+	"driver_name": "github.com/go-sql-driver/mysql"
+}

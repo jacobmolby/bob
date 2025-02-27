@@ -3,11 +3,19 @@ package psql_test
 import (
 	"testing"
 
+	"github.com/stephenafamo/bob"
 	"github.com/stephenafamo/bob/dialect/psql"
+	"github.com/stephenafamo/bob/dialect/psql/dialect"
 	"github.com/stephenafamo/bob/dialect/psql/fm"
 	"github.com/stephenafamo/bob/dialect/psql/sm"
+	"github.com/stephenafamo/bob/dialect/psql/wm"
 	testutils "github.com/stephenafamo/bob/test/utils"
 	pg_query "github.com/wasilibs/go-pgquery"
+)
+
+var (
+	_ bob.Loadable     = &dialect.SelectQuery{}
+	_ bob.MapperModder = &dialect.SelectQuery{}
 )
 
 func TestSelect(t *testing.T) {
@@ -20,6 +28,34 @@ func TestSelect(t *testing.T) {
 				sm.Columns("id", "name"),
 				sm.From("users"),
 				sm.Where(psql.Quote("id").In(psql.Arg(100, 200, 300))),
+			),
+		},
+		"case with else": {
+			ExpectedSQL: `SELECT id, name, (CASE WHEN (id = '1') THEN 'A' ELSE 'B' END) AS "C" FROM users`,
+			Query: psql.Select(
+				sm.Columns(
+					"id",
+					"name",
+					psql.Case().
+						When(psql.Quote("id").EQ(psql.S("1")), psql.S("A")).
+						Else(psql.S("B")).
+						As("C"),
+				),
+				sm.From("users"),
+			),
+		},
+		"case without else": {
+			ExpectedSQL: `SELECT id, name, (CASE WHEN (id = '1') THEN 'A' END) AS "C" FROM users`,
+			Query: psql.Select(
+				sm.Columns(
+					"id",
+					"name",
+					psql.Case().
+						When(psql.Quote("id").EQ(psql.S("1")), psql.S("A")).
+						End().
+						As("C"),
+				),
+				sm.From("users"),
 			),
 		},
 		"select distinct": {
@@ -92,7 +128,10 @@ func TestSelect(t *testing.T) {
 					sm.Columns(
 						"status",
 						psql.F("LEAD", "created_date", 1, psql.F("NOW"))(
-							fm.Over().PartitionBy("presale_id").OrderBy("created_date"),
+							fm.Over(
+								wm.PartitionBy("presale_id"),
+								wm.OrderBy("created_date"),
+							),
 						).Minus(psql.Quote("created_date")).As("difference")),
 					sm.From("presales_presalestatus")),
 				).As("differnce_by_status"),
@@ -156,11 +195,62 @@ FROM c
 WINDOW w AS (PARTITION BY depname ORDER BY salary)`,
 			Query: psql.Select(
 				sm.Columns(
-					psql.F("avg", "salary")(fm.Over().From("w")),
+					psql.F("avg", "salary")(fm.Over(wm.BasedOn("w"))),
 				),
 				sm.From("c"),
-				sm.Window("w").PartitionBy("depname").OrderBy("salary"),
+				sm.Window("w", wm.PartitionBy("depname"), wm.OrderBy("salary")),
 			),
+		},
+		"select with order by and collate": {
+			Query: psql.Select(
+				sm.Columns("id", "name"),
+				sm.From("users"),
+				sm.OrderBy("name").Collate("bg-BG-x-icu").Asc(),
+			),
+			ExpectedSQL: `SELECT id, name FROM users ORDER BY name COLLATE "bg-BG-x-icu" ASC`,
+		},
+		"with cross join": {
+			Query: psql.Select(
+				sm.Columns("id", "name", "type"),
+				sm.From("users").As("u"),
+				sm.CrossJoin(psql.Select(
+					sm.Columns("id", "type"),
+					sm.From("clients"),
+					sm.Where(psql.Quote("client_id").EQ(psql.Arg("123"))),
+				)).As("clients"),
+				sm.Where(psql.Quote("id").EQ(psql.Arg(100))),
+			),
+			ExpectedSQL: `SELECT id, name, type
+                FROM users AS u CROSS JOIN (
+                  SELECT id, type
+                  FROM clients
+                  WHERE ("client_id" = $1)
+                ) AS "clients"
+                WHERE ("id" = $2)`,
+			ExpectedArgs: []any{"123", 100},
+		},
+		"with locking": {
+			Query: psql.Select(
+				sm.Columns("id", "name"),
+				sm.From("users"),
+				sm.ForUpdate("users").SkipLocked(),
+			),
+			ExpectedSQL: `SELECT id, name FROM users FOR UPDATE OF users SKIP LOCKED`,
+		},
+		"Multiple Unions": {
+			Query: psql.Select(
+				sm.Columns("id", "name"),
+				sm.From("users"),
+				sm.Union(psql.Select(
+					sm.Columns("id", "name"),
+					sm.From("admins"),
+				)),
+				sm.Union(psql.Select(
+					sm.Columns("id", "name"),
+					sm.From("mods"),
+				)),
+			),
+			ExpectedSQL: `SELECT id, name FROM users UNION select id, name FROM admins UNION select id, name FROM mods`,
 		},
 	}
 

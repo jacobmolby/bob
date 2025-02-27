@@ -4,12 +4,20 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/antlr/antlr4/runtime/Go/antlr/v4"
+	"github.com/antlr4-go/antlr/v4"
+	"github.com/stephenafamo/bob"
 	"github.com/stephenafamo/bob/dialect/sqlite"
+	"github.com/stephenafamo/bob/dialect/sqlite/dialect"
 	"github.com/stephenafamo/bob/dialect/sqlite/fm"
 	"github.com/stephenafamo/bob/dialect/sqlite/sm"
+	"github.com/stephenafamo/bob/dialect/sqlite/wm"
 	testutils "github.com/stephenafamo/bob/test/utils"
 	sqliteparser "github.com/stephenafamo/sqlparser/sqlite"
+)
+
+var (
+	_ bob.Loadable     = &dialect.SelectQuery{}
+	_ bob.MapperModder = &dialect.SelectQuery{}
 )
 
 func TestSelect(t *testing.T) {
@@ -21,6 +29,34 @@ func TestSelect(t *testing.T) {
 				sm.Columns("id", "name"),
 				sm.From("users"),
 				sm.Where(sqlite.Quote("id").In(sqlite.Arg(100, 200, 300))),
+			),
+		},
+		"case with else": {
+			ExpectedSQL: `SELECT id, name, (CASE WHEN ("id" = '1') THEN 'A' ELSE 'B' END) AS "C" FROM users`,
+			Query: sqlite.Select(
+				sm.Columns(
+					"id",
+					"name",
+					sqlite.Case().
+						When(sqlite.Quote("id").EQ(sqlite.S("1")), sqlite.S("A")).
+						Else(sqlite.S("B")).
+						As("C"),
+				),
+				sm.From("users"),
+			),
+		},
+		"case without else": {
+			ExpectedSQL: `SELECT id, name, (CASE WHEN ("id" = '1') THEN 'A' END) AS "C" FROM users`,
+			Query: sqlite.Select(
+				sm.Columns(
+					"id",
+					"name",
+					sqlite.Case().
+						When(sqlite.Quote("id").EQ(sqlite.S("1")), sqlite.S("A")).
+						End().
+						As("C"),
+				),
+				sm.From("users"),
 			),
 		},
 		"select distinct": {
@@ -58,7 +94,10 @@ func TestSelect(t *testing.T) {
 					sm.Columns(
 						"status",
 						sqlite.F("LEAD", "created_date", 1, sqlite.F("NOW"))(
-							fm.Over().PartitionBy("presale_id").OrderBy("created_date"),
+							fm.Over(
+								wm.PartitionBy("presale_id"),
+								wm.OrderBy("created_date"),
+							),
 						).Minus(sqlite.Quote("created_date")).As("difference")),
 					sm.From("presales_presalestatus")),
 				).As("differnce_by_status"),
@@ -74,6 +113,34 @@ func TestSelect(t *testing.T) {
 			),
 			ExpectedSQL:  `SELECT id, name FROM users WHERE (("id", "employee_id") IN ((?1, ?2), (?3, ?4)))`,
 			ExpectedArgs: []any{100, 200, 300, 400},
+		},
+		"select with order by and collate": {
+			Query: sqlite.Select(
+				sm.Columns("id", "name"),
+				sm.From("users"),
+				sm.OrderBy("name").Collate("NOCASE").Asc(),
+			),
+			ExpectedSQL: `SELECT id, name FROM users ORDER BY name COLLATE "NOCASE" ASC`,
+		},
+		"with cross join": {
+			Query: sqlite.Select(
+				sm.Columns("id", "name", "type"),
+				sm.From("users").As("u"),
+				sm.CrossJoin(sqlite.Select(
+					sm.Columns("id", "type"),
+					sm.From("clients"),
+					sm.Where(sqlite.Quote("client_id").EQ(sqlite.Arg("123"))),
+				)).As("clients"),
+				sm.Where(sqlite.Quote("id").EQ(sqlite.Arg(100))),
+			),
+			ExpectedSQL: `SELECT id, name, type
+                FROM users AS "u" CROSS JOIN (
+                  SELECT id, type
+                  FROM clients
+                  WHERE ("client_id" = ?1)
+                ) AS "clients"
+                WHERE ("id" = ?2)`,
+			ExpectedArgs: []any{"123", 100},
 		},
 	}
 

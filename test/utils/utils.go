@@ -1,6 +1,8 @@
 package testutils
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"regexp"
 	"strings"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/stephenafamo/bob"
+	"github.com/stephenafamo/scan"
 )
 
 type Testcases map[string]Testcase
@@ -64,7 +67,7 @@ func RunTests(t *testing.T, cases Testcases, format FormatFunc) {
 	t.Helper()
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			sql, args, err := bob.Build(tc.Query)
+			sql, args, err := bob.Build(context.Background(), tc.Query)
 			if err != nil {
 				t.Fatalf("error: %v", err)
 			}
@@ -100,7 +103,7 @@ func RunExpressionTests(t *testing.T, d bob.Dialect, cases ExpressionTestcases) 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			b := &strings.Builder{}
-			args, err := bob.Express(b, d, 1, tc.Expression)
+			args, err := bob.Express(context.Background(), b, d, 1, tc.Expression)
 			sql := b.String()
 
 			if diff := ErrDiff(tc.ExpectedError, err); diff != "" {
@@ -116,4 +119,14 @@ func RunExpressionTests(t *testing.T, d bob.Dialect, cases ExpressionTestcases) 
 			}
 		})
 	}
+}
+
+type NoopExecutor struct{}
+
+func (n NoopExecutor) QueryContext(ctx context.Context, query string, args ...any) (scan.Rows, error) {
+	return nil, nil //nolint:nilnil
+}
+
+func (n NoopExecutor) ExecContext(_ context.Context, _ string, _ ...any) (sql.Result, error) {
+	return nil, nil //nolint:nilnil
 }

@@ -36,33 +36,33 @@ func OrRollback() bob.Mod[*dialect.UpdateQuery] {
 }
 
 func Table(name any) bob.Mod[*dialect.UpdateQuery] {
-	return mods.QueryModFunc[*dialect.UpdateQuery](func(q *dialect.UpdateQuery) {
+	return bob.ModFunc[*dialect.UpdateQuery](func(q *dialect.UpdateQuery) {
 		q.Table.Table = name
 	})
 }
 
 func TableAs(name any, alias string) bob.Mod[*dialect.UpdateQuery] {
-	return mods.QueryModFunc[*dialect.UpdateQuery](func(q *dialect.UpdateQuery) {
+	return bob.ModFunc[*dialect.UpdateQuery](func(q *dialect.UpdateQuery) {
 		q.Table.Table = name
 		q.Table.Alias = alias
 	})
 }
 
 func TableIndexedBy(i string) bob.Mod[*dialect.UpdateQuery] {
-	return mods.QueryModFunc[*dialect.UpdateQuery](func(q *dialect.UpdateQuery) {
+	return bob.ModFunc[*dialect.UpdateQuery](func(q *dialect.UpdateQuery) {
 		q.Table.IndexedBy = &i
 	})
 }
 
 func TableNotIndexed() bob.Mod[*dialect.UpdateQuery] {
-	return mods.QueryModFunc[*dialect.UpdateQuery](func(q *dialect.UpdateQuery) {
+	return bob.ModFunc[*dialect.UpdateQuery](func(q *dialect.UpdateQuery) {
 		var s string
 		q.Table.IndexedBy = &s
 	})
 }
 
 func Set(sets ...bob.Expression) bob.Mod[*dialect.UpdateQuery] {
-	return mods.QueryModFunc[*dialect.UpdateQuery](func(q *dialect.UpdateQuery) {
+	return bob.ModFunc[*dialect.UpdateQuery](func(q *dialect.UpdateQuery) {
 		q.Set.Set = append(q.Set.Set, internal.ToAnySlice(sets)...)
 	})
 }
@@ -91,7 +91,7 @@ func FullJoin(e any) dialect.JoinChain[*dialect.UpdateQuery] {
 	return dialect.FullJoin[*dialect.UpdateQuery](e)
 }
 
-func CrossJoin(e any) bob.Mod[*dialect.UpdateQuery] {
+func CrossJoin(e any) dialect.CrossJoinChain[*dialect.UpdateQuery] {
 	return dialect.CrossJoin[*dialect.UpdateQuery](e)
 }
 

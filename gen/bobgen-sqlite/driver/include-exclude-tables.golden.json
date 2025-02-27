@@ -1,0 +1,130 @@
+{
+	"tables": [
+		{
+			"key": "foo_baz",
+			"schema": "",
+			"name": "foo_baz",
+			"columns": [
+				{
+					"name": "id",
+					"db_type": "INTEGER",
+					"default": "auto_increment",
+					"comment": "",
+					"nullable": false,
+					"generated": false,
+					"autoincr": false,
+					"domain_name": "",
+					"type": "int32"
+				},
+				{
+					"name": "secret_col",
+					"db_type": "TEXT",
+					"default": "",
+					"comment": "",
+					"nullable": false,
+					"generated": false,
+					"autoincr": false,
+					"domain_name": "",
+					"type": "string"
+				}
+			],
+			"indexes": [
+				{
+					"type": "pk",
+					"name": "pk_main_foo_baz",
+					"columns": [
+						{
+							"name": "id",
+							"desc": false,
+							"is_expression": false
+						}
+					],
+					"unique": true,
+					"comment": "",
+					"extra": {
+						"partial": false
+					}
+				}
+			],
+			"constraints": {
+				"primary": {
+					"name": "pk_main_foo_baz",
+					"columns": [
+						"id"
+					],
+					"comment": "",
+					"extra": null
+				},
+				"foreign": [],
+				"uniques": null,
+				"check": null
+			},
+			"comment": ""
+		},
+		{
+			"key": "one.foo_baz",
+			"schema": "one",
+			"name": "foo_baz",
+			"columns": [
+				{
+					"name": "id",
+					"db_type": "INTEGER",
+					"default": "auto_increment",
+					"comment": "",
+					"nullable": false,
+					"generated": false,
+					"autoincr": false,
+					"domain_name": "",
+					"type": "int32"
+				},
+				{
+					"name": "secret_col",
+					"db_type": "TEXT",
+					"default": "",
+					"comment": "",
+					"nullable": false,
+					"generated": false,
+					"autoincr": false,
+					"domain_name": "",
+					"type": "string"
+				}
+			],
+			"indexes": [
+				{
+					"type": "pk",
+					"name": "pk_one_foo_baz",
+					"columns": [
+						{
+							"name": "id",
+							"desc": false,
+							"is_expression": false
+						}
+					],
+					"unique": true,
+					"comment": "",
+					"extra": {
+						"partial": false
+					}
+				}
+			],
+			"constraints": {
+				"primary": {
+					"name": "pk_one_foo_baz",
+					"columns": [
+						"id"
+					],
+					"comment": "",
+					"extra": null
+				},
+				"foreign": [],
+				"uniques": null,
+				"check": null
+			},
+			"comment": ""
+		}
+	],
+	"query_folders": null,
+	"enums": null,
+	"extra_info": null,
+	"driver_name": "modernc.org/sqlite"
+}

@@ -16,7 +16,7 @@ import (
 	helpers "github.com/stephenafamo/bob/gen/bobgen-helpers"
 	"github.com/stephenafamo/bob/gen/drivers"
 	testfiles "github.com/stephenafamo/bob/test/files"
-	testutils "github.com/stephenafamo/bob/test/utils"
+	testgen "github.com/stephenafamo/bob/test/gen"
 )
 
 var (
@@ -87,10 +87,91 @@ func TestDriver(t *testing.T) {
 			},
 			goldenJson: "mysql.golden.json",
 		},
+		{
+			name: "include tables",
+			config: Config{
+				Dsn: dsn,
+				Only: map[string][]string{
+					"foo_bar": nil,
+					"foo_baz": nil,
+				},
+			},
+			goldenJson: "include-tables.golden.json",
+		},
+		{
+			name: "exclude tables",
+			config: Config{
+				Dsn: dsn,
+				Except: map[string][]string{
+					"foo_bar": nil,
+					"foo_baz": nil,
+					"*":       {"secret_col"},
+				},
+			},
+			goldenJson: "exclude-tables.golden.json",
+		},
+		{
+			name: "include + exclude tables",
+			config: Config{
+				Dsn: dsn,
+				Only: map[string][]string{
+					"foo_bar": nil,
+					"foo_baz": nil,
+				},
+				Except: map[string][]string{
+					"foo_bar": nil,
+					"bar_baz": nil,
+				},
+			},
+			goldenJson: "include-exclude-tables.golden.json",
+		},
+		{
+			name: "include + exclude tables regex",
+			config: Config{
+				Dsn: dsn,
+				Only: map[string][]string{
+					"/^foo/": nil,
+					"/^bar/": nil,
+				},
+				Except: map[string][]string{
+					"/bar$/": nil,
+					"/baz$/": nil,
+				},
+			},
+			goldenJson: "include-exclude-tables-regex.golden.json",
+		},
+		{
+			name: "include + exclude tables mixed",
+			config: Config{
+				Dsn: dsn,
+				Only: map[string][]string{
+					"/^foo/":  nil,
+					"bar_baz": nil,
+					"bar_qux": nil,
+				},
+				Except: map[string][]string{
+					"/bar$/":  nil,
+					"foo_baz": nil,
+					"foo_qux": nil,
+				},
+			},
+			goldenJson: "include-exclude-tables-mixed.golden.json",
+		},
 	}
 
-	for _, tt := range tests {
+	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if i > 0 {
+				testgen.TestAssemble(t, testgen.AssembleTestConfig[any, any, any]{
+					GetDriver: func() drivers.Interface[any, any, any] {
+						return New(tt.config)
+					},
+					GoldenFile:      tt.goldenJson,
+					OverwriteGolden: *flagOverwriteGolden,
+					Templates:       &helpers.Templates{Models: []fs.FS{gen.MySQLModelTemplates}},
+				})
+				return
+			}
 			out, err := os.MkdirTemp("", "bobgen_mysql_")
 			if err != nil {
 				t.Fatalf("unable to create tempdir: %s", err)
@@ -105,9 +186,9 @@ func TestDriver(t *testing.T) {
 				os.RemoveAll(out)
 			}()
 
-			testutils.TestDriver(t, testutils.DriverTestConfig[any]{
+			testgen.TestDriver(t, testgen.DriverTestConfig[any, any, any]{
 				Root: out,
-				GetDriver: func() drivers.Interface[any] {
+				GetDriver: func() drivers.Interface[any, any, any] {
 					return New(tt.config)
 				},
 				GoldenFile:      tt.goldenJson,

@@ -24,6 +24,54 @@ mysql.Select(
 )
 ```
 
+## Case With Else
+
+SQL:
+
+```sql
+SELECT id, name, (CASE WHEN (`id` = '1') THEN 'A' ELSE 'B' END) AS `C` FROM users
+```
+
+Code:
+
+```go
+mysql.Select(
+  sm.Columns(
+    "id",
+    "name",
+    mysql.Case().
+      When(mysql.Quote("id").EQ(mysql.S("1")), mysql.S("A")).
+      Else(mysql.S("B")).
+      As("C"),
+  ),
+  sm.From("users"),
+)
+```
+
+## Case Without Else
+
+SQL:
+
+```sql
+SELECT id, name, (CASE WHEN (`id` = '1') THEN 'A' END) AS `C` FROM users
+```
+
+Code:
+
+```go
+mysql.Select(
+  sm.Columns(
+    "id",
+    "name",
+    mysql.Case().
+      When(mysql.Quote("id").EQ(mysql.S("1")), mysql.S("A")).
+      End().
+      As("C"),
+  ),
+  sm.From("users"),
+)
+```
+
 ## Select Distinct
 
 SQL:
@@ -76,7 +124,10 @@ mysql.Select(
     sm.Columns(
       "status",
       mysql.F("LEAD", "created_date", 1, mysql.F("NOW"))(
-        fm.Over().PartitionBy("presale_id").OrderBy("created_date"),
+        fm.Over(
+          wm.PartitionBy("presale_id"),
+          wm.OrderBy("created_date"),
+        ),
       ).Minus(mysql.Quote("created_date")).As("difference")),
     sm.From("presales_presalestatus")),
   ).As("differnce_by_status"),
@@ -107,5 +158,23 @@ mysql.Select(
   sm.Columns("id", "name"),
   sm.From("users"),
   sm.Where(mysql.Group(mysql.Quote("id"), mysql.Quote("employee_id")).In(mysql.ArgGroup(100, 200), mysql.ArgGroup(300, 400))),
+)
+```
+
+## Select With Order By And Collate
+
+SQL:
+
+```sql
+SELECT id, name FROM users ORDER BY name COLLATE `utf8mb4_bg_0900_as_cs` ASC
+```
+
+Code:
+
+```go
+mysql.Select(
+  sm.Columns("id", "name"),
+  sm.From("users"),
+  sm.OrderBy("name").Collate("utf8mb4_bg_0900_as_cs").Asc(),
 )
 ```

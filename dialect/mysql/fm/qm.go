@@ -8,7 +8,7 @@ import (
 )
 
 func Distinct() bob.Mod[*dialect.Function] {
-	return mods.QueryModFunc[*dialect.Function](func(f *dialect.Function) {
+	return bob.ModFunc[*dialect.Function](func(f *dialect.Function) {
 		f.Distinct = true
 	})
 }
@@ -22,15 +22,16 @@ func OrderBy(e any) dialect.OrderBy[*dialect.Function] {
 }
 
 func Filter(e ...any) bob.Mod[*dialect.Function] {
-	return mods.QueryModFunc[*dialect.Function](func(f *dialect.Function) {
+	return bob.ModFunc[*dialect.Function](func(f *dialect.Function) {
 		f.Filter = append(f.Filter, e...)
 	})
 }
 
-func Over() dialect.WindowMod[*dialect.Function] {
-	m := dialect.WindowMod[*dialect.Function]{}
-	m.WindowChain = &dialect.WindowChain[*dialect.WindowMod[*dialect.Function]]{
-		Wrap: &m,
+func Over(winMods ...bob.Mod[*clause.Window]) bob.Mod[*dialect.Function] {
+	w := clause.Window{}
+	for _, mod := range winMods {
+		mod.Apply(&w)
 	}
-	return m
+
+	return mods.Window[*dialect.Function](w)
 }

@@ -8,9 +8,11 @@ import (
 	"testing"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	psqlDriver "github.com/stephenafamo/bob/gen/bobgen-psql/driver"
+	sqliteDriver "github.com/stephenafamo/bob/gen/bobgen-sqlite/driver"
 	"github.com/stephenafamo/bob/gen/drivers"
 	testfiles "github.com/stephenafamo/bob/test/files"
-	testutils "github.com/stephenafamo/bob/test/utils"
+	testgen "github.com/stephenafamo/bob/test/gen"
 )
 
 func TestPostgres(t *testing.T) {
@@ -22,9 +24,9 @@ func TestPostgres(t *testing.T) {
 		fs: testfiles.PostgresSchema,
 	}
 
-	testutils.TestDriver(t, testutils.DriverTestConfig[any]{
+	testgen.TestDriver(t, testgen.DriverTestConfig[any, any, psqlDriver.IndexExtra]{
 		Root: out,
-		GetDriver: func() drivers.Interface[any] {
+		GetDriver: func() drivers.Interface[any, any, psqlDriver.IndexExtra] {
 			d, err := getPsqlDriver(context.Background(), config)
 			if err != nil {
 				t.Fatalf("getting psql driver: %s", err)
@@ -46,9 +48,9 @@ func TestSQLite(t *testing.T) {
 		Schemas: []string{"one"},
 	}
 
-	testutils.TestDriver(t, testutils.DriverTestConfig[any]{
+	testgen.TestDriver(t, testgen.DriverTestConfig[any, any, sqliteDriver.IndexExtra]{
 		Root: out,
-		GetDriver: func() drivers.Interface[any] {
+		GetDriver: func() drivers.Interface[any, any, sqliteDriver.IndexExtra] {
 			d, err := getSQLiteDriver(context.Background(), config)
 			if err != nil {
 				t.Fatalf("getting sqlite driver: %s", err)

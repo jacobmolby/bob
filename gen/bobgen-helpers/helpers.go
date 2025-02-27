@@ -35,6 +35,7 @@ func Version() string {
 type Templates struct {
 	Models  []fs.FS
 	Factory []fs.FS
+	Queries []fs.FS
 }
 
 func DefaultOutputs(destination, pkgname string, noFactory bool, templates *Templates) []*gen.Output {
@@ -57,6 +58,10 @@ func DefaultOutputs(destination, pkgname string, noFactory bool, templates *Temp
 			PkgName:   pkgname,
 			Templates: append(templates.Models, gen.ModelTemplates),
 		},
+		{
+			Key:       "queries",
+			Templates: append(templates.Queries, gen.QueriesTemplates),
+		},
 	}
 
 	if !noFactory {
@@ -71,9 +76,9 @@ func DefaultOutputs(destination, pkgname string, noFactory bool, templates *Temp
 	return outputs
 }
 
-func GetConfigFromFile[DriverConfig any](configPath, driverConfigKey string) (gen.Config, DriverConfig, error) {
+func GetConfigFromFile[ConstraintExtra, DriverConfig any](configPath, driverConfigKey string) (gen.Config[ConstraintExtra], DriverConfig, error) {
 	var provider koanf.Provider
-	var config gen.Config
+	var config gen.Config[ConstraintExtra]
 	var driverConfig DriverConfig
 
 	_, err := os.Stat(configPath)
@@ -85,11 +90,11 @@ func GetConfigFromFile[DriverConfig any](configPath, driverConfigKey string) (ge
 		return config, driverConfig, err
 	}
 
-	return GetConfigFromProvider[DriverConfig](provider, driverConfigKey)
+	return GetConfigFromProvider[ConstraintExtra, DriverConfig](provider, driverConfigKey)
 }
 
-func GetConfigFromProvider[DriverConfig any](provider koanf.Provider, driverConfigKey string) (gen.Config, DriverConfig, error) {
-	var config gen.Config
+func GetConfigFromProvider[ConstraintExtra, DriverConfig any](provider koanf.Provider, driverConfigKey string) (gen.Config[ConstraintExtra], DriverConfig, error) {
+	var config gen.Config[ConstraintExtra]
 	var driverConfig DriverConfig
 
 	k := koanf.New(".")
@@ -144,59 +149,6 @@ func EnumType(types drivers.Types, enum string) string {
 	}
 
 	return enum
-}
-
-const pgtypesImport = `"github.com/stephenafamo/bob/types/pgtypes"`
-
-func AddPgEnumArrayType(types drivers.Types, enumTyp string) string {
-	arrTyp := fmt.Sprintf("pgtypes.EnumArray[%s]", enumTyp)
-
-	// premptively add the enum type
-	// this is to prevent issues if the enum is only used in an array
-	EnumType(types, enumTyp)
-
-	types[arrTyp] = drivers.Type{
-		DependsOn:           []string{enumTyp},
-		Imports:             importers.List{pgtypesImport},
-		NoRandomizationTest: true, // enums are often not random enough
-		RandomExpr: fmt.Sprintf(`arr := make(%s, f.IntBetween(1, 5))
-            for i := range arr {
-                arr[i] = random_%s(f)
-            }
-            return arr`, arrTyp, gen.NormalizeType(enumTyp)),
-	}
-
-	return arrTyp
-}
-
-func AddPgGenericArrayType(types drivers.Types, singleTyp string) string {
-	singleTypDef := types[singleTyp]
-	singleComparer := strings.ReplaceAll(singleTypDef.CompareExpr, "AAA", "a")
-	singleComparer = strings.ReplaceAll(singleComparer, "BBB", "b")
-	if singleComparer == "" {
-		singleComparer = "a == b"
-	}
-
-	typ := fmt.Sprintf("pgtypes.Array[%s]", singleTyp)
-
-	types[typ] = drivers.Type{
-		DependsOn: []string{singleTyp},
-		Imports:   append(importers.List{pgtypesImport}, singleTypDef.Imports...),
-		RandomExpr: fmt.Sprintf(`arr := make(%s, f.IntBetween(1, 5))
-            for i := range arr {
-                arr[i] = random_%s(f)
-            }
-            return arr`, typ, gen.NormalizeType(singleTyp)),
-		CompareExpr: fmt.Sprintf(`slices.EqualFunc(AAA, BBB, func(a, b %s) bool {
-                return %s
-            })`, singleTyp, singleComparer),
-		CompareExprImports: append(append(
-			importers.List{`"slices"`},
-			singleTypDef.CompareExprImports...),
-			singleTypDef.Imports...),
-	}
-
-	return typ
 }
 
 func Types() drivers.Types {
@@ -281,7 +233,7 @@ func Types() drivers.Types {
                 ipAddr := netip.AddrFrom4(addr)
                 ipPrefix := netip.PrefixFrom(ipAddr, f.IntBetween(0, ipAddr.BitLen()))
                 return pgtypes.Inet{Prefix: ipPrefix}`,
-			RandomExprImports: importers.List{`"crypto/rand"`},
+			RandomExprImports: importers.List{`"crypto/rand"`, `"net/netip"`},
 		},
 		"pgtypes.Macaddr": {
 			Imports: importers.List{`"github.com/stephenafamo/bob/types/pgtypes"`},
@@ -338,7 +290,7 @@ func Types() drivers.Types {
 			Imports: importers.List{`"github.com/lib/pq"`},
 			RandomExpr: `arr := make(pq.Float64Array, f.IntBetween(1, 5))
                 for i := range arr {
-                    arr[i] = f.Float64()
+                    arr[i] = f.Float64(10, -1_000_000, 1_000_000)
                 }
                 return arr`,
 			CompareExpr:        `slices.Equal(AAA, BBB)`,
@@ -403,7 +355,7 @@ func Types() drivers.Types {
 			Imports:   importers.List{`"github.com/stephenafamo/bob/types/pgtypes"`},
 			RandomExpr: `hs := make(pgtypes.HStore)
                 for i := 0; i < f.IntBetween(1, 5); i++ {
-                    arr[random_string(f)] = null.FromCond(random_string(f), f.Bool())
+                    hs[random_string(f)] = null.FromCond(random_string(f), f.Bool())
                 }
                 return hs`,
 		},

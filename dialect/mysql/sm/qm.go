@@ -16,37 +16,37 @@ func Recursive(r bool) bob.Mod[*dialect.SelectQuery] {
 }
 
 func Distinct(on ...any) bob.Mod[*dialect.SelectQuery] {
-	return mods.QueryModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
+	return bob.ModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
 		q.AppendModifier("DISTINCT")
 	})
 }
 
 func HighPriority() bob.Mod[*dialect.SelectQuery] {
-	return mods.QueryModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
+	return bob.ModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
 		q.AppendModifier("HIGH_PRIORITY")
 	})
 }
 
 func Straight() bob.Mod[*dialect.SelectQuery] {
-	return mods.QueryModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
+	return bob.ModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
 		q.AppendModifier("STRAIGHT_JOIN")
 	})
 }
 
 func SmallResult() bob.Mod[*dialect.SelectQuery] {
-	return mods.QueryModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
+	return bob.ModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
 		q.AppendModifier("SQL_SMALL_RESULT")
 	})
 }
 
 func BigResult() bob.Mod[*dialect.SelectQuery] {
-	return mods.QueryModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
+	return bob.ModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
 		q.AppendModifier("SQL_BIG_RESULT")
 	})
 }
 
 func BufferResult() bob.Mod[*dialect.SelectQuery] {
-	return mods.QueryModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
+	return bob.ModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
 		q.AppendModifier("SQL_BUFFER_RESULT")
 	})
 }
@@ -71,11 +71,11 @@ func RightJoin(e any) dialect.JoinChain[*dialect.SelectQuery] {
 	return dialect.RightJoin[*dialect.SelectQuery](e)
 }
 
-func CrossJoin(e any) bob.Mod[*dialect.SelectQuery] {
+func CrossJoin(e any) dialect.JoinChain[*dialect.SelectQuery] {
 	return dialect.CrossJoin[*dialect.SelectQuery](e)
 }
 
-func StraightJoin(e any) bob.Mod[*dialect.SelectQuery] {
+func StraightJoin(e any) dialect.JoinChain[*dialect.SelectQuery] {
 	return dialect.StraightJoin[*dialect.SelectQuery](e)
 }
 
@@ -94,20 +94,21 @@ func GroupBy(e any) bob.Mod[*dialect.SelectQuery] {
 }
 
 func WithRollup(distinct bool) bob.Mod[*dialect.SelectQuery] {
-	return mods.QueryModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
+	return bob.ModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
 		q.SetGroupWith("ROLLUP")
 	})
 }
 
-func Window(name string) dialect.WindowsMod[*dialect.SelectQuery] {
-	m := dialect.WindowsMod[*dialect.SelectQuery]{
-		Name: name,
+func Window(name string, winMods ...bob.Mod[*clause.Window]) bob.Mod[*dialect.SelectQuery] {
+	w := clause.Window{}
+	for _, mod := range winMods {
+		mod.Apply(&w)
 	}
 
-	m.WindowChain = &dialect.WindowChain[*dialect.WindowsMod[*dialect.SelectQuery]]{
-		Wrap: &m,
-	}
-	return m
+	return mods.NamedWindow[*dialect.SelectQuery](clause.NamedWindow{
+		Name:       name,
+		Definition: w,
+	})
 }
 
 func OrderBy(e any) dialect.OrderBy[*dialect.SelectQuery] {
@@ -198,7 +199,7 @@ func ForShare(tables ...string) dialect.LockChain[*dialect.SelectQuery] {
 
 // No need for the leading @
 func Into(var1 string, vars ...string) bob.Mod[*dialect.SelectQuery] {
-	return mods.QueryModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
+	return bob.ModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
 		q.SetInto(into{
 			vars: append([]string{var1}, vars...),
 		})
@@ -206,7 +207,7 @@ func Into(var1 string, vars ...string) bob.Mod[*dialect.SelectQuery] {
 }
 
 func IntoDumpfile(filename string) bob.Mod[*dialect.SelectQuery] {
-	return mods.QueryModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
+	return bob.ModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
 		q.SetInto(into{
 			dumpfile: filename,
 		})

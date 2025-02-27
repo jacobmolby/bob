@@ -63,32 +63,22 @@ func TestOutputFilenameParts(t *testing.T) {
 	tests := []struct {
 		Filename string
 
-		Normalized  string
-		IsSingleton bool
-		IsGo        bool
-		UsePkg      bool
+		Normalized string
+		IsGo       bool
 	}{
-		{"00_struct.go.tpl", "struct.go", false, true, true},
-		{"singleton/00_struct.go.tpl", "struct.go", true, true, true},
-		{"notpkg/00_struct.go.tpl", "notpkg/struct.go", false, true, false},
-		{"js/singleton/00_struct.js.tpl", "js/struct.js", true, false, false},
-		{"js/00_struct.js.tpl", "js/struct.js", false, false, false},
+		{"00_struct.go.tpl", "struct.go", true},
+		{"notpkg/00_struct.go.tpl", "notpkg/struct.go", true},
+		{"js/00_struct.js.tpl", "js/struct.js", false},
 	}
 
 	for i, test := range tests {
-		normalized, isSingleton, isGo, usePkg := outputFilenameParts(test.Filename)
+		normalized, isGo := outputFilenameParts(test.Filename)
 
 		if normalized != test.Normalized {
 			t.Errorf("%d) normalized wrong, want: %s, got: %s", i, test.Normalized, normalized)
 		}
-		if isSingleton != test.IsSingleton {
-			t.Errorf("%d) isSingleton wrong, want: %t, got: %t", i, test.IsSingleton, isSingleton)
-		}
 		if isGo != test.IsGo {
 			t.Errorf("%d) isGo wrong, want: %t, got: %t", i, test.IsGo, isGo)
-		}
-		if usePkg != test.UsePkg {
-			t.Errorf("%d) usePkg wrong, want: %t, got: %t", i, test.UsePkg, usePkg)
 		}
 	}
 }
@@ -156,14 +146,9 @@ func TestGetOutputFilename(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			notTest := getOutputFilename(tc.SchemaName, tc.TableName, false, tc.IsGo)
+			notTest := getOutputFilename(tc.SchemaName, tc.TableName, tc.IsGo)
 			if diff := cmp.Diff(tc.Expected, notTest); diff != "" {
-				t.Fatalf(diff)
-			}
-
-			isTest := getOutputFilename(tc.SchemaName, tc.TableName, true, tc.IsGo)
-			if diff := cmp.Diff(tc.Expected+"_test", isTest); diff != "" {
-				t.Fatalf(diff)
+				t.Fatal(diff)
 			}
 		})
 	}

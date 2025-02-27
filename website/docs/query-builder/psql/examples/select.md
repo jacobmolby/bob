@@ -24,6 +24,54 @@ psql.Select(
 )
 ```
 
+## Case With Else
+
+SQL:
+
+```sql
+SELECT id, name, (CASE WHEN (id = '1') THEN 'A' ELSE 'B' END) AS "C" FROM users
+```
+
+Code:
+
+```go
+psql.Select(
+  sm.Columns(
+    "id",
+    "name",
+    psql.Case().
+      When(psql.Quote("id").EQ(psql.S("1")), psql.S("A")).
+      Else(psql.S("B")).
+      As("C"),
+  ),
+  sm.From("users"),
+)
+```
+
+## Case Without Else
+
+SQL:
+
+```sql
+SELECT id, name, (CASE WHEN (id = '1') THEN 'A' END) AS "C" FROM users
+```
+
+Code:
+
+```go
+psql.Select(
+  sm.Columns(
+    "id",
+    "name",
+    psql.Case().
+      When(psql.Quote("id").EQ(psql.S("1")), psql.S("A")).
+      End().
+      As("C"),
+  ),
+  sm.From("users"),
+)
+```
+
 ## Select Distinct
 
 SQL:
@@ -153,7 +201,10 @@ psql.Select(
     sm.Columns(
       "status",
       psql.F("LEAD", "created_date", 1, psql.F("NOW"))(
-        fm.Over().PartitionBy("presale_id").OrderBy("created_date"),
+        fm.Over(
+          wm.PartitionBy("presale_id"),
+          wm.OrderBy("created_date"),
+        ),
       ).Minus(psql.Quote("created_date")).As("difference")),
     sm.From("presales_presalestatus")),
   ).As("differnce_by_status"),
@@ -286,9 +337,104 @@ Code:
 ```go
 psql.Select(
   sm.Columns(
-    psql.F("avg", "salary")(fm.Over().From("w")),
+    psql.F("avg", "salary")(fm.Over(wm.BasedOn("w"))),
   ),
   sm.From("c"),
-  sm.Window("w").PartitionBy("depname").OrderBy("salary"),
+  sm.Window("w", wm.PartitionBy("depname"), wm.OrderBy("salary")),
+)
+```
+
+## Select With Order By And Collate
+
+SQL:
+
+```sql
+SELECT id, name FROM users ORDER BY name COLLATE "bg-BG-x-icu" ASC
+```
+
+Code:
+
+```go
+psql.Select(
+  sm.Columns("id", "name"),
+  sm.From("users"),
+  sm.OrderBy("name").Collate("bg-BG-x-icu").Asc(),
+)
+```
+
+## With Cross Join
+
+SQL:
+
+```sql
+SELECT id, name, type
+FROM users AS u CROSS JOIN (
+  SELECT id, type
+  FROM clients
+  WHERE ("client_id" = $1)
+) AS "clients"
+WHERE ("id" = $2)
+```
+
+Args:
+
+* `"123"`
+* `100`
+
+Code:
+
+```go
+psql.Select(
+  sm.Columns("id", "name", "type"),
+  sm.From("users").As("u"),
+  sm.CrossJoin(psql.Select(
+    sm.Columns("id", "type"),
+    sm.From("clients"),
+    sm.Where(psql.Quote("client_id").EQ(psql.Arg("123"))),
+  )).As("clients"),
+  sm.Where(psql.Quote("id").EQ(psql.Arg(100))),
+)
+```
+
+## With Locking
+
+SQL:
+
+```sql
+SELECT id, name FROM users FOR UPDATE OF users SKIP LOCKED
+```
+
+Code:
+
+```go
+psql.Select(
+  sm.Columns("id", "name"),
+  sm.From("users"),
+  sm.ForUpdate("users").SkipLocked(),
+)
+```
+
+## Multiple Unions
+
+SQL:
+
+```sql
+SELECT id, name FROM users UNION select id, name FROM admins UNION select id, name FROM mods
+```
+
+Code:
+
+```go
+psql.Select(
+  sm.Columns("id", "name"),
+  sm.From("users"),
+  sm.Union(psql.Select(
+    sm.Columns("id", "name"),
+    sm.From("admins"),
+  )),
+  sm.Union(psql.Select(
+    sm.Columns("id", "name"),
+    sm.From("mods"),
+  )),
 )
 ```

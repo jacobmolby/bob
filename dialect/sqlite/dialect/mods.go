@@ -1,8 +1,6 @@
 package dialect
 
 import (
-	"io"
-
 	"github.com/stephenafamo/bob"
 	"github.com/stephenafamo/bob/clause"
 	"github.com/stephenafamo/bob/expr"
@@ -51,31 +49,31 @@ func (c CTEChain[Q]) Materialized() CTEChain[Q] {
 }
 
 func OrAbort[Q interface{ SetOr(string) }]() bob.Mod[Q] {
-	return mods.QueryModFunc[Q](func(i Q) {
+	return bob.ModFunc[Q](func(i Q) {
 		i.SetOr("ABORT")
 	})
 }
 
 func OrFail[Q interface{ SetOr(string) }]() bob.Mod[Q] {
-	return mods.QueryModFunc[Q](func(i Q) {
+	return bob.ModFunc[Q](func(i Q) {
 		i.SetOr("FAIL")
 	})
 }
 
 func OrIgnore[Q interface{ SetOr(string) }]() bob.Mod[Q] {
-	return mods.QueryModFunc[Q](func(i Q) {
+	return bob.ModFunc[Q](func(i Q) {
 		i.SetOr("IGNORE")
 	})
 }
 
 func OrReplace[Q interface{ SetOr(string) }]() bob.Mod[Q] {
-	return mods.QueryModFunc[Q](func(i Q) {
+	return bob.ModFunc[Q](func(i Q) {
 		i.SetOr("REPLACE")
 	})
 }
 
 func OrRollback[Q interface{ SetOr(string) }]() bob.Mod[Q] {
-	return mods.QueryModFunc[Q](func(i Q) {
+	return bob.ModFunc[Q](func(i Q) {
 		i.SetOr("ROLLBACK")
 	})
 }
@@ -197,6 +195,22 @@ func (j JoinChain[Q]) Using(using ...string) bob.Mod[Q] {
 	return mods.Join[Q](jo)
 }
 
+type CrossJoinChain[Q Joinable] func() clause.Join
+
+func (j CrossJoinChain[Q]) Apply(q Q) {
+	q.AppendJoin(j())
+}
+
+func (j CrossJoinChain[Q]) As(alias string, columns ...string) bob.Mod[Q] {
+	jo := j()
+	jo.To.Alias = alias
+	jo.To.Columns = columns
+
+	return CrossJoinChain[Q](func() clause.Join {
+		return jo
+	})
+}
+
 type Joinable interface{ AppendJoin(clause.Join) }
 
 func Join[Q Joinable](typ string, e any) JoinChain[Q] {
@@ -224,8 +238,13 @@ func FullJoin[Q Joinable](e any) JoinChain[Q] {
 	return Join[Q](clause.FullJoin, e)
 }
 
-func CrossJoin[Q Joinable](e any) bob.Mod[Q] {
-	return Join[Q](clause.CrossJoin, e)
+func CrossJoin[Q Joinable](e any) CrossJoinChain[Q] {
+	return CrossJoinChain[Q](func() clause.Join {
+		return clause.Join{
+			Type: clause.CrossJoin,
+			To:   clause.From{Table: e},
+		}
+	})
 }
 
 type OrderBy[Q interface{ AppendOrder(clause.OrderDef) }] func() clause.OrderDef
@@ -234,9 +253,9 @@ func (s OrderBy[Q]) Apply(q Q) {
 	q.AppendOrder(s())
 }
 
-func (o OrderBy[Q]) Collate(collation string) OrderBy[Q] {
+func (o OrderBy[Q]) Collate(collationName string) OrderBy[Q] {
 	order := o()
-	order.CollationName = collation
+	order.Collation = collationName
 
 	return OrderBy[Q](func() clause.OrderDef {
 		return order
@@ -277,135 +296,4 @@ func (o OrderBy[Q]) NullsLast() OrderBy[Q] {
 	return OrderBy[Q](func() clause.OrderDef {
 		return order
 	})
-}
-
-type WindowMod[Q interface{ SetWindow(clause.Window) }] struct {
-	*WindowChain[*WindowMod[Q]]
-}
-
-func (w WindowMod[Q]) Apply(q Q) {
-	q.SetWindow(w.def)
-}
-
-type WindowsMod[Q interface{ AppendWindow(clause.NamedWindow) }] struct {
-	Name string
-	*WindowChain[*WindowsMod[Q]]
-}
-
-func (w *WindowsMod[Q]) Apply(q Q) {
-	q.AppendWindow(clause.NamedWindow{
-		Name:       w.Name,
-		Definition: w.def,
-	})
-}
-
-type WindowChain[T any] struct {
-	def  clause.Window
-	Wrap T
-}
-
-func (w *WindowChain[T]) From(name string) T {
-	w.def.SetFrom(name)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) PartitionBy(condition ...any) T {
-	w.def.AddPartitionBy(condition...)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) OrderBy(order ...any) T {
-	w.def.AddOrderBy(order...)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) Range() T {
-	w.def.SetMode("RANGE")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) Rows() T {
-	w.def.SetMode("ROWS")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) Groups() T {
-	w.def.SetMode("GROUPS")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) FromUnboundedPreceding() T {
-	w.def.SetStart("UNBOUNDED PRECEDING")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) FromPreceding(exp any) T {
-	w.def.SetStart(bob.ExpressionFunc(
-		func(w io.Writer, d bob.Dialect, start int) ([]any, error) {
-			return bob.ExpressIf(w, d, start, exp, true, "", " PRECEDING")
-		}),
-	)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) FromCurrentRow() T {
-	w.def.SetStart("CURRENT ROW")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) FromFollowing(exp any) T {
-	w.def.SetStart(bob.ExpressionFunc(
-		func(w io.Writer, d bob.Dialect, start int) ([]any, error) {
-			return bob.ExpressIf(w, d, start, exp, true, "", " FOLLOWING")
-		}),
-	)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) ToPreceding(exp any) T {
-	w.def.SetEnd(bob.ExpressionFunc(
-		func(w io.Writer, d bob.Dialect, start int) ([]any, error) {
-			return bob.ExpressIf(w, d, start, exp, true, "", " PRECEDING")
-		}),
-	)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) ToCurrentRow(count int) T {
-	w.def.SetEnd("CURRENT ROW")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) ToFollowing(exp any) T {
-	w.def.SetEnd(bob.ExpressionFunc(
-		func(w io.Writer, d bob.Dialect, start int) ([]any, error) {
-			return bob.ExpressIf(w, d, start, exp, true, "", " FOLLOWING")
-		}),
-	)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) ToUnboundedFollowing() T {
-	w.def.SetEnd("UNBOUNDED FOLLOWING")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) ExcludeNoOthers() T {
-	w.def.SetExclusion("NO OTHERS")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) ExcludeCurrentRow() T {
-	w.def.SetExclusion("CURRENT ROW")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) ExcludeGroup() T {
-	w.def.SetExclusion("GROUP")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) ExcludeTies() T {
-	w.def.SetExclusion("TIES")
-	return w.Wrap
 }

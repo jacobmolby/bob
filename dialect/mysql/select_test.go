@@ -4,12 +4,20 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/antlr/antlr4/runtime/Go/antlr/v4"
+	"github.com/antlr4-go/antlr/v4"
+	"github.com/stephenafamo/bob"
 	"github.com/stephenafamo/bob/dialect/mysql"
+	"github.com/stephenafamo/bob/dialect/mysql/dialect"
 	"github.com/stephenafamo/bob/dialect/mysql/fm"
 	"github.com/stephenafamo/bob/dialect/mysql/sm"
+	"github.com/stephenafamo/bob/dialect/mysql/wm"
 	testutils "github.com/stephenafamo/bob/test/utils"
 	mysqlparser "github.com/stephenafamo/sqlparser/mysql"
+)
+
+var (
+	_ bob.Loadable     = &dialect.SelectQuery{}
+	_ bob.MapperModder = &dialect.SelectQuery{}
 )
 
 func TestSelect(t *testing.T) {
@@ -21,6 +29,34 @@ func TestSelect(t *testing.T) {
 				sm.Columns("id", "name"),
 				sm.From("users"),
 				sm.Where(mysql.Quote("id").In(mysql.Arg(100, 200, 300))),
+			),
+		},
+		"case with else": {
+			ExpectedSQL: "SELECT id, name, (CASE WHEN (`id` = '1') THEN 'A' ELSE 'B' END) AS `C` FROM users",
+			Query: mysql.Select(
+				sm.Columns(
+					"id",
+					"name",
+					mysql.Case().
+						When(mysql.Quote("id").EQ(mysql.S("1")), mysql.S("A")).
+						Else(mysql.S("B")).
+						As("C"),
+				),
+				sm.From("users"),
+			),
+		},
+		"case without else": {
+			ExpectedSQL: "SELECT id, name, (CASE WHEN (`id` = '1') THEN 'A' END) AS `C` FROM users",
+			Query: mysql.Select(
+				sm.Columns(
+					"id",
+					"name",
+					mysql.Case().
+						When(mysql.Quote("id").EQ(mysql.S("1")), mysql.S("A")).
+						End().
+						As("C"),
+				),
+				sm.From("users"),
 			),
 		},
 		"select distinct": {
@@ -51,7 +87,10 @@ func TestSelect(t *testing.T) {
 					sm.Columns(
 						"status",
 						mysql.F("LEAD", "created_date", 1, mysql.F("NOW"))(
-							fm.Over().PartitionBy("presale_id").OrderBy("created_date"),
+							fm.Over(
+								wm.PartitionBy("presale_id"),
+								wm.OrderBy("created_date"),
+							),
 						).Minus(mysql.Quote("created_date")).As("difference")),
 					sm.From("presales_presalestatus")),
 				).As("differnce_by_status"),
@@ -67,6 +106,14 @@ func TestSelect(t *testing.T) {
 			),
 			ExpectedSQL:  "SELECT id, name FROM users WHERE ((`id`, `employee_id`) IN ((?, ?), (?, ?)))",
 			ExpectedArgs: []any{100, 200, 300, 400},
+		},
+		"select with order by and collate": {
+			Query: mysql.Select(
+				sm.Columns("id", "name"),
+				sm.From("users"),
+				sm.OrderBy("name").Collate("utf8mb4_bg_0900_as_cs").Asc(),
+			),
+			ExpectedSQL: "SELECT id, name FROM users ORDER BY name COLLATE `utf8mb4_bg_0900_as_cs` ASC",
 		},
 	}
 

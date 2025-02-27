@@ -3,8 +3,11 @@ package driver
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/aarondl/opt/null"
@@ -12,16 +15,23 @@ import (
 	"github.com/stephenafamo/bob/gen/drivers"
 	"github.com/stephenafamo/scan"
 	"github.com/stephenafamo/scan/stdscan"
+	_ "github.com/tursodatabase/libsql-client-go/libsql"
 	"github.com/volatiletech/strmangle"
 	_ "modernc.org/sqlite"
 )
 
 type (
-	Interface = drivers.Interface[any]
-	DBInfo    = drivers.DBInfo[any]
+	Interface  = drivers.Interface[any, any, IndexExtra]
+	DBInfo     = drivers.DBInfo[any, any, IndexExtra]
+	IndexExtra = struct {
+		Partial bool `json:"partial"`
+	}
 )
 
 func New(config Config) Interface {
+	if config.DriverName == "" {
+		config.DriverName = "modernc.org/sqlite"
+	}
 	return &driver{config: config}
 }
 
@@ -39,6 +49,8 @@ type Config struct {
 	Only map[string][]string
 	// List of tables that will be should be ignored. Others are included
 	Except map[string][]string
+	// Which `database/sql` driver to use (the full module name)
+	DriverName string `yaml:"driver_name"`
 
 	// Used in main.go
 
@@ -68,10 +80,6 @@ func (d *driver) PackageName() string {
 	return d.config.Pkgname
 }
 
-func (d *driver) Capabilities() drivers.Capabilities {
-	return drivers.Capabilities{}
-}
-
 func (d *driver) Types() drivers.Types {
 	return helpers.Types()
 }
@@ -88,14 +96,18 @@ func (d *driver) Assemble(ctx context.Context) (*DBInfo, error) {
 		return nil, fmt.Errorf("database dsn is not set")
 	}
 
-	d.conn, err = sql.Open("sqlite", d.config.DSN)
+	driverName := d.inferDriver()
+	d.conn, err = sql.Open(driverName, d.config.DSN)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 	defer d.conn.Close()
 
 	for schema, dsn := range d.config.Attach {
-		_, err = d.conn.ExecContext(ctx, fmt.Sprintf("attach database '%s' as %s", dsn, schema))
+		if driverName == "sqlite" {
+			dsn = strconv.Quote(dsn)
+		}
+		_, err = d.conn.ExecContext(ctx, fmt.Sprintf("attach database %s as %s", dsn, schema))
 		if err != nil {
 			return nil, fmt.Errorf("could not attach %q: %w", schema, err)
 		}
@@ -106,7 +118,38 @@ func (d *driver) Assemble(ctx context.Context) (*DBInfo, error) {
 		return nil, err
 	}
 
-	return &DBInfo{Tables: tables}, nil
+	if driverName == "libsql" {
+		d.config.DriverName = "github.com/tursodatabase/libsql-client-go/libsql"
+	}
+	dbinfo := &DBInfo{
+		DriverName: d.config.DriverName,
+		Tables:     tables,
+	}
+
+	return dbinfo, nil
+}
+
+func (d *driver) inferDriver() string {
+	driverName := "sqlite"
+	if !strings.Contains(d.config.DSN, "://") {
+		return driverName
+	}
+	dsn, _ := url.Parse(d.config.DSN)
+	if dsn == nil {
+		return driverName
+	}
+	libsqlSchemes := map[string]bool{
+		"libsql": true,
+		"file":   true,
+		"https":  true,
+		"http":   true,
+		"wss":    true,
+		"ws":     true,
+	}
+	if libsqlSchemes[dsn.Scheme] {
+		driverName = "libsql"
+	}
+	return driverName
 }
 
 func (d *driver) buildQuery(schema string) (string, []any) {
@@ -115,31 +158,51 @@ func (d *driver) buildQuery(schema string) (string, []any) {
 
 	tableFilter := drivers.ParseTableFilter(d.config.Only, d.config.Except)
 
-	include := make([]string, 0, len(tableFilter.Only))
-	for _, name := range tableFilter.Only {
-		if (schema == "main" && !strings.Contains(name, ".")) || strings.HasPrefix(name, schema+".") {
-			include = append(include, name)
+	if len(tableFilter.Only) > 0 {
+		var subqueries []string
+		stringPatterns, regexPatterns := tableFilter.ClassifyPatterns(tableFilter.Only)
+		include := make([]string, 0, len(stringPatterns))
+		for _, name := range stringPatterns {
+			if (schema == "main" && !strings.Contains(name, ".")) || strings.HasPrefix(name, schema+".") {
+				include = append(include, strings.TrimPrefix(name, schema+"."))
+			}
+		}
+		if len(include) > 0 {
+			subqueries = append(subqueries, fmt.Sprintf("name in (%s)", strmangle.Placeholders(false, len(include), 1, 1)))
+			for _, w := range include {
+				args = append(args, w)
+			}
+		}
+		if len(regexPatterns) > 0 {
+			subqueries = append(subqueries, fmt.Sprintf("name regexp (%s)", strmangle.Placeholders(false, 1, len(args)+1, 1)))
+			args = append(args, strings.Join(regexPatterns, "|"))
+		}
+		if len(subqueries) > 0 {
+			query += fmt.Sprintf(" and (%s)", strings.Join(subqueries, " or "))
 		}
 	}
 
-	exclude := make([]string, 0, len(tableFilter.Except))
-	for _, name := range tableFilter.Except {
-		if (schema == "main" && !strings.Contains(name, ".")) || strings.HasPrefix(name, schema+".") {
-			exclude = append(exclude, name)
+	if len(tableFilter.Except) > 0 {
+		var subqueries []string
+		stringPatterns, regexPatterns := tableFilter.ClassifyPatterns(tableFilter.Except)
+		exclude := make([]string, 0, len(tableFilter.Except))
+		for _, name := range stringPatterns {
+			if (schema == "main" && !strings.Contains(name, ".")) || strings.HasPrefix(name, schema+".") {
+				exclude = append(exclude, strings.TrimPrefix(name, schema+"."))
+			}
 		}
-	}
-
-	if len(include) > 0 {
-		query += fmt.Sprintf(" and name in (%s)", strmangle.Placeholders(true, len(include), 1, 1))
-		for _, w := range include {
-			args = append(args, w)
+		if len(exclude) > 0 {
+			subqueries = append(subqueries, fmt.Sprintf("name not in (%s)", strmangle.Placeholders(false, len(exclude), 1+len(args), 1)))
+			for _, w := range exclude {
+				args = append(args, w)
+			}
 		}
-	}
-
-	if len(exclude) > 0 {
-		query += fmt.Sprintf(" and name not in (%s)", strmangle.Placeholders(true, len(exclude), 1+len(include), 1))
-		for _, w := range exclude {
-			args = append(args, w)
+		if len(regexPatterns) > 0 {
+			subqueries = append(subqueries, fmt.Sprintf("name not regexp (%s)", strmangle.Placeholders(false, 1, len(args)+1, 1)))
+			args = append(args, strings.Join(regexPatterns, "|"))
+		}
+		if len(subqueries) > 0 {
+			query += fmt.Sprintf(" and (%s)", strings.Join(subqueries, " and "))
 		}
 	}
 
@@ -148,16 +211,17 @@ func (d *driver) buildQuery(schema string) (string, []any) {
 	return query, args
 }
 
-func (d *driver) tables(ctx context.Context) ([]drivers.Table, error) {
+func (d *driver) tables(ctx context.Context) (drivers.Tables[any, IndexExtra], error) {
 	mainQuery, mainArgs := d.buildQuery("main")
 	mainTables, err := stdscan.All(ctx, d.conn, scan.SingleColumnMapper[string], mainQuery, mainArgs...)
 	if err != nil {
 		return nil, err
 	}
 
-	allTables := make([]drivers.Table, len(mainTables))
+	colFilter := drivers.ParseColumnFilter(mainTables, d.config.Only, d.config.Except)
+	allTables := make(drivers.Tables[any, IndexExtra], len(mainTables))
 	for i, name := range mainTables {
-		allTables[i], err = d.getTable(ctx, "main", name)
+		allTables[i], err = d.getTable(ctx, "main", name, colFilter)
 		if err != nil {
 			return nil, err
 		}
@@ -169,9 +233,9 @@ func (d *driver) tables(ctx context.Context) ([]drivers.Table, error) {
 		if err != nil {
 			return nil, err
 		}
-
+		colFilter = drivers.ParseColumnFilter(tables, d.config.Only, d.config.Except)
 		for _, name := range tables {
-			table, err := d.getTable(ctx, schema, name)
+			table, err := d.getTable(ctx, schema, name, colFilter)
 			if err != nil {
 				return nil, err
 			}
@@ -182,10 +246,10 @@ func (d *driver) tables(ctx context.Context) ([]drivers.Table, error) {
 	return allTables, nil
 }
 
-func (d driver) getTable(ctx context.Context, schema, name string) (drivers.Table, error) {
+func (d driver) getTable(ctx context.Context, schema, name string, colFilter drivers.ColumnFilter) (drivers.Table[any, IndexExtra], error) {
 	var err error
 
-	table := drivers.Table{
+	table := drivers.Table[any, IndexExtra]{
 		Key:    d.key(schema, name),
 		Schema: d.schema(schema),
 		Name:   name,
@@ -196,18 +260,15 @@ func (d driver) getTable(ctx context.Context, schema, name string) (drivers.Tabl
 		return table, err
 	}
 
-	table.Columns, err = d.columns(ctx, schema, name, tinfo)
+	table.Columns, err = d.columns(ctx, schema, name, tinfo, colFilter)
 	if err != nil {
 		return table, err
 	}
 
+	// We cannot rely on the indexes to get the primary key
+	// because it is not always included in the indexes
 	table.Constraints.Primary = d.primaryKey(schema, name, tinfo)
 	table.Constraints.Foreign, err = d.foreignKeys(ctx, schema, name)
-	if err != nil {
-		return table, err
-	}
-
-	table.Constraints.Uniques, err = d.uniques(ctx, schema, name)
 	if err != nil {
 		return table, err
 	}
@@ -217,6 +278,42 @@ func (d driver) getTable(ctx context.Context, schema, name string) (drivers.Tabl
 		return table, err
 	}
 
+	// Get Unique constraints from indexes
+	// Also check if the primary key is in the indexes
+	hasPk := false
+	for _, index := range table.Indexes {
+		constraint := drivers.Constraint[any]{
+			Name:    index.Name,
+			Columns: index.NonExpressionColumns(),
+		}
+
+		switch index.Type {
+		case "pk":
+			hasPk = true
+		case "u":
+			table.Constraints.Uniques = append(table.Constraints.Uniques, constraint)
+		}
+	}
+
+	// Add the primary key to the indexes if it is not already there
+	if !hasPk && table.Constraints.Primary != nil {
+		pkIndex := drivers.Index[IndexExtra]{
+			Type:    "pk",
+			Name:    table.Constraints.Primary.Name,
+			Columns: make([]drivers.IndexColumn, len(table.Constraints.Primary.Columns)),
+			Unique:  true,
+		}
+
+		for i, col := range table.Constraints.Primary.Columns {
+			pkIndex.Columns[i] = drivers.IndexColumn{
+				Name: col,
+			}
+		}
+
+		// List the primary key first
+		table.Indexes = append([]drivers.Index[IndexExtra]{pkIndex}, table.Indexes...)
+	}
+
 	return table, nil
 }
 
@@ -224,7 +321,7 @@ func (d driver) getTable(ctx context.Context, schema, name string) (drivers.Tabl
 // from the database. It retrieves the column names
 // and column types and returns those as a []Column after TranslateColumnType()
 // converts the SQL types to Go types, for example: "varchar" to "string"
-func (d driver) columns(ctx context.Context, schema, tableName string, tinfo []info) ([]drivers.Column, error) {
+func (d driver) columns(ctx context.Context, schema, tableName string, tinfo []info, colFilter drivers.ColumnFilter) ([]drivers.Column, error) {
 	var columns []drivers.Column //nolint:prealloc
 
 	//nolint:gosec
@@ -245,7 +342,18 @@ func (d driver) columns(ctx context.Context, schema, tableName string, tinfo []i
 		}
 	}
 
+	filter := colFilter[tableName]
+	excludedColumns := make(map[string]struct{}, len(filter.Except))
+	if len(filter.Except) > 0 {
+		for _, w := range filter.Except {
+			excludedColumns[w] = struct{}{}
+		}
+	}
+
 	for _, colInfo := range tinfo {
+		if _, ok := excludedColumns[colInfo.Name]; ok {
+			continue
+		}
 		column := drivers.Column{
 			Name:     colInfo.Name,
 			DBType:   strings.ToUpper(colInfo.Type),
@@ -302,7 +410,7 @@ func (s driver) tableInfo(ctx context.Context, schema, tableName string) ([]info
 }
 
 // primaryKey looks up the primary key for a table.
-func (s driver) primaryKey(schema, tableName string, tinfo []info) *drivers.PrimaryKey {
+func (s driver) primaryKey(schema, tableName string, tinfo []info) *drivers.Constraint[any] {
 	var cols []string
 	for _, c := range tinfo {
 		if c.Pk > 0 {
@@ -314,7 +422,7 @@ func (s driver) primaryKey(schema, tableName string, tinfo []info) *drivers.Prim
 		return nil
 	}
 
-	return &drivers.PrimaryKey{
+	return &drivers.Constraint[any]{
 		Name:    fmt.Sprintf("pk_%s_%s", schema, tableName),
 		Columns: cols,
 	}
@@ -362,14 +470,14 @@ func (d driver) skipKey(table, column string) bool {
 }
 
 // foreignKeys retrieves the foreign keys for a given table name.
-func (d driver) foreignKeys(ctx context.Context, schema, tableName string) ([]drivers.ForeignKey, error) {
+func (d driver) foreignKeys(ctx context.Context, schema, tableName string) ([]drivers.ForeignKey[any], error) {
 	rows, err := d.conn.QueryContext(ctx, fmt.Sprintf("PRAGMA '%s'.foreign_key_list('%s')", schema, tableName))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	fkeyMap := make(map[int]drivers.ForeignKey)
+	fkeyMap := make(map[int]drivers.ForeignKey[any])
 	for rows.Next() {
 		var id, seq int
 		var ftable, col string
@@ -392,7 +500,7 @@ func (d driver) foreignKeys(ctx context.Context, schema, tableName string) ([]dr
 		if fcol == "" {
 			fcol, err = stdscan.One(
 				ctx, d.conn, scan.SingleColumnMapper[string],
-				fmt.Sprintf("SELECT name FROM '%s'.pragma_table_info('%s') WHERE pk = ?", schema, ftable), seq+1,
+				fmt.Sprintf("SELECT name FROM pragma_table_info('%s', '%s') WHERE pk = ?", ftable, schema), seq+1,
 			)
 			if err != nil {
 				return nil, fmt.Errorf("could not find column %q in table %q: %w", col, ftable, err)
@@ -403,9 +511,11 @@ func (d driver) foreignKeys(ctx context.Context, schema, tableName string) ([]dr
 			continue
 		}
 
-		fkeyMap[id] = drivers.ForeignKey{
-			Name:           fmt.Sprintf("fk_%s_%d", tableName, id),
-			Columns:        append(fkeyMap[id].Columns, col),
+		fkeyMap[id] = drivers.ForeignKey[any]{
+			Constraint: drivers.Constraint[any]{
+				Name:    fmt.Sprintf("fk_%s_%d", tableName, id),
+				Columns: append(fkeyMap[id].Columns, col),
+			},
 			ForeignTable:   d.key(schema, ftable),
 			ForeignColumns: append(fkeyMap[id].ForeignColumns, fcol),
 		}
@@ -415,7 +525,7 @@ func (d driver) foreignKeys(ctx context.Context, schema, tableName string) ([]dr
 		return nil, err
 	}
 
-	fkeys := make([]drivers.ForeignKey, 0, len(fkeyMap))
+	fkeys := make([]drivers.ForeignKey[any], 0, len(fkeyMap))
 
 	for _, fkey := range fkeyMap {
 		fkeys = append(fkeys, fkey)
@@ -428,76 +538,7 @@ func (d driver) foreignKeys(ctx context.Context, schema, tableName string) ([]dr
 	return fkeys, nil
 }
 
-// uniques retrieves the foreign keys for a given table name.
-func (d driver) uniques(ctx context.Context, schema, tableName string) ([]drivers.Constraint, error) {
-	rows, err := d.conn.QueryContext(ctx, fmt.Sprintf("PRAGMA '%s'.index_list('%s')", schema, tableName))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var indexes []string
-	for rows.Next() {
-		var seq, unique, partial int
-		var name, origin string
-
-		err = rows.Scan(&seq, &name, &unique, &origin, &partial)
-		if err != nil {
-			return nil, err
-		}
-
-		// Index must be created by a unique constraint
-		if origin != "u" {
-			continue
-		}
-
-		indexes = append(indexes, name)
-	}
-	rows.Close()
-
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-
-	uniques := make([]drivers.Constraint, len(indexes))
-	for i, index := range indexes {
-		uniques[i], err = d.getUniqueIndex(ctx, schema, index)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return uniques, nil
-}
-
-func (d driver) getUniqueIndex(ctx context.Context, schema, index string) (drivers.Constraint, error) {
-	unique := drivers.Constraint{Name: index}
-
-	rows, err := d.conn.QueryContext(ctx, fmt.Sprintf("PRAGMA '%s'.index_info('%s')", schema, index))
-	if err != nil {
-		return unique, err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var seq, cid int
-		var name sql.NullString
-
-		err = rows.Scan(&seq, &cid, &name)
-		if err != nil {
-			return unique, err
-		}
-
-		// Index must be created by a unique constraint
-		if !name.Valid {
-			continue
-		}
-
-		unique.Columns = append(unique.Columns, name.String)
-	}
-
-	return unique, nil
-}
+// uniques retrieves the unique keys for a given table name.
 
 type info struct {
 	Cid          int
@@ -569,90 +610,97 @@ func (driver) translateColumnType(c drivers.Column) drivers.Column {
 	return c
 }
 
-func (d *driver) indexes(ctx context.Context, schema, tableName string) ([]drivers.Index, error) {
-	//nolint:gosec
-	query := fmt.Sprintf("SELECT name FROM '%s'.pragma_index_list('%s') ORDER BY name ASC", schema, tableName)
-	rows, err := d.conn.QueryContext(ctx, query)
+func (d *driver) indexes(ctx context.Context, schema, tableName string) ([]drivers.Index[IndexExtra], error) {
+	query := fmt.Sprintf(`
+        SELECT name, "unique", origin, partial
+        FROM pragma_index_list('%s', '%s') ORDER BY seq ASC
+        `, tableName, schema)
+	indexNames, err := stdscan.All(ctx, d.conn, scan.StructMapper[struct {
+		Name    string
+		Unique  bool
+		Origin  string
+		Partial bool
+	}](), query)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var indexNames []string
-	for rows.Next() {
-		var name string
-		err = rows.Scan(&name)
+	indexes := make([]drivers.Index[IndexExtra], len(indexNames))
+	for i, index := range indexNames {
+		cols, err := d.getIndexInformation(ctx, schema, tableName, index.Name)
 		if err != nil {
 			return nil, err
 		}
-		indexNames = append(indexNames, name)
-	}
-
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-
-	indexes := make([]drivers.Index, len(indexNames))
-	for i, indexName := range indexNames {
-		indexes[i], err = d.getIndexInformation(ctx, schema, tableName, indexName)
-		if err != nil {
-			return nil, err
+		indexes[i] = drivers.Index[IndexExtra]{
+			Type:    index.Origin,
+			Name:    index.Name,
+			Unique:  index.Unique,
+			Columns: cols,
+			Extra: IndexExtra{
+				Partial: index.Partial,
+			},
 		}
+
 	}
 
 	return indexes, nil
 }
 
-func (d *driver) getIndexInformation(ctx context.Context, schema, tableName, indexName string) (drivers.Index, error) {
-	var index drivers.Index
-	index.Name = indexName
-
-	//nolint:gosec
-	query := fmt.Sprintf("SELECT name FROM '%s'.pragma_index_info('%s') ORDER BY seqno ASC", schema, indexName)
-	rows, err := d.conn.QueryContext(ctx, query)
+func (d *driver) getIndexInformation(ctx context.Context, schema, tableName, indexName string) ([]drivers.IndexColumn, error) {
+	colExpressions, err := d.extractIndexExpressions(ctx, schema, tableName, indexName)
 	if err != nil {
-		return index, err
+		return nil, err
 	}
-	defer rows.Close()
 
-	exprCols := make(map[int]struct{})
-	for seqno := 0; rows.Next(); seqno++ {
-		var name null.Val[string]
-		err = rows.Scan(&name)
+	query := fmt.Sprintf(`
+            SELECT seqno, name, desc
+            FROM pragma_index_xinfo('%s', '%s')
+            WHERE key = 1
+            ORDER BY seqno ASC`,
+		indexName, schema)
+
+	var columns []drivers.IndexColumn //nolint:prealloc
+	for column, err := range stdscan.Each(ctx, d.conn, scan.StructMapper[struct {
+		Seqno int
+		Name  sql.NullString
+		Desc  bool
+	}](), query) {
 		if err != nil {
-			return index, err
+			return nil, err
 		}
-		if name.IsSet() {
-			index.Columns = append(index.Columns, name.GetOrZero())
-		} else {
-			exprCols[seqno] = struct{}{}
+
+		col := drivers.IndexColumn{
+			Name: column.Name.String,
+			Desc: column.Desc,
 		}
+
+		if !column.Name.Valid {
+			col.Name = colExpressions[column.Seqno]
+			col.IsExpression = true
+		}
+
+		columns = append(columns, col)
 	}
 
-	if len(exprCols) > 0 {
-		index.Expressions, err = d.extractIndexExpressions(ctx, schema, tableName, indexName, exprCols)
-		if err != nil {
-			return index, err
-		}
-	}
-
-	if err = rows.Err(); err != nil {
-		return index, err
-	}
-
-	return index, nil
+	return columns, nil
 }
 
-func (d driver) extractIndexExpressions(ctx context.Context, schema, tableName, indexName string, exprCols map[int]struct{}) ([]string, error) {
-	var ddl string
-	var expressions []string //nolint:prealloc
+func (d driver) extractIndexExpressions(ctx context.Context, schema, tableName, indexName string) ([]string, error) {
+	var nullDDL sql.NullString
+
 	//nolint:gosec
 	query := fmt.Sprintf("SELECT sql FROM '%s'.sqlite_master WHERE type = 'index' AND name = ? AND tbl_name = ?", schema)
 	result := d.conn.QueryRowContext(ctx, query, indexName, tableName)
-	err := result.Scan(&ddl)
-	if err != nil {
-		return expressions, fmt.Errorf("failed retrieving index DDL statement: %w", err)
+	err := result.Scan(&nullDDL)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("failed retrieving index DDL statement: %w", err)
 	}
+
+	if !nullDDL.Valid {
+		return nil, nil
+	}
+
+	ddl := nullDDL.String
 	// We're following the parsing logic from the `intckParseCreateIndex` function in the SQLite source code.
 	// 1. https://github.com/sqlite/sqlite/blob/1d8cde9d56d153767e98595c4b015221864ef0e7/ext/intck/sqlite3intck.c#L363
 	// 2. https://www.sqlite.org/lang_createindex.html
@@ -660,24 +708,21 @@ func (d driver) extractIndexExpressions(ctx context.Context, schema, tableName, 
 	// skip forward until the first "(" token
 	i := strings.Index(ddl, "(")
 	if i == -1 {
-		return expressions, fmt.Errorf("failed locating first column: %w", err)
+		return nil, fmt.Errorf("failed locating first column: %w", err)
 	}
 	ddl = ddl[i+1:]
 	// discard the WHERE clause fragment (if one exists)
 	i = strings.LastIndex(ddl, ")")
 	if i == -1 {
-		return expressions, fmt.Errorf("failed locating last column: %w", err)
+		return nil, fmt.Errorf("failed locating last column: %w", err)
 	}
 	ddl = ddl[:i]
 	// organize column definitions into a list
 	colDefs := d.splitColumnDefinitions(ddl)
 
-	for seqno, expression := range colDefs {
-		if _, ok := exprCols[seqno]; !ok {
-			// this index column references a regular column rather than an expression, so we skip the extraction.
-			continue
-		}
-		expressions = append(expressions, strings.TrimSpace(expression))
+	expressions := make([]string, len(colDefs))
+	for seqNo, expression := range colDefs {
+		expressions[seqNo] = strings.TrimSpace(expression)
 	}
 
 	return expressions, nil

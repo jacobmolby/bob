@@ -18,7 +18,7 @@ create table sponsors (
 create table videos (
 	id int primary key not null auto_increment,
 
-	user_id int not null COMMENT 'this is a comment',
+	user_id int not null COMMENT 'This is a column',
 	sponsor_id int unique,
 
 	foreign key (user_id) references users (id),
@@ -39,7 +39,7 @@ create table video_tags (
 );
 
 create table type_monsters (
-	id int primary key not null auto_increment COMMENT 'comment on ID',
+	id int primary key not null auto_increment COMMENT 'This is another column',
 
 	enum_use        enum('monday', 'tuesday', 'wednesday', 'thursday', 'friday') not null,
 	enum_nullable   enum('monday', 'tuesday', 'wednesday', 'thursday', 'friday'),
@@ -181,8 +181,8 @@ create table type_monsters (
     generated_nnull text GENERATED ALWAYS AS (UPPER(text_nnull)) STORED NOT NULL,
     generated_null text GENERATED ALWAYS AS (UPPER(text_null)) STORED,
 
-    INDEX(int_one, int_two)
-);
+    UNIQUE(int_one, int_two)
+) COMMENT = 'This is a table';
 
 create view user_videos as
 select u.id user_id, v.id video_id, v.sponsor_id sponsor_id
@@ -196,7 +196,7 @@ CREATE TABLE multi_keys (
 	user_id INT NOT NULL,
 	sponsor_id INT UNIQUE,
 
-    something INT,
+    something INT CHECK (something > 0),
     another INT,
     
   	one   int NULL,
@@ -211,9 +211,30 @@ CREATE TABLE test_index_expressions (
     col2 int,
     col3 int
 );
-CREATE INDEX idx1 ON test_index_expressions ((col1 + col2));
+CREATE INDEX idx1 ON test_index_expressions ((col1 + col2)) COMMENT 'This is an index';
 CREATE INDEX idx2 ON test_index_expressions ((col1 + col2), col3);
 CREATE INDEX idx3 ON test_index_expressions (col1, (col2 + col3));
 CREATE INDEX idx4 ON test_index_expressions (col3);
 CREATE INDEX idx5 ON test_index_expressions (col1 DESC, col2 DESC);
 CREATE INDEX idx6 ON test_index_expressions ((POW(col3, 2)));
+
+CREATE TABLE foo_bar (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    secret_col VARCHAR(255) NOT NULL
+);
+CREATE TABLE foo_baz (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    secret_col VARCHAR(255) NOT NULL
+);
+CREATE TABLE foo_qux (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    secret_col VARCHAR(255) NOT NULL
+);
+CREATE TABLE bar_baz (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    secret_col VARCHAR(255) NOT NULL
+);
+CREATE TABLE bar_qux (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    secret_col VARCHAR(255) NOT NULL
+);

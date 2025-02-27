@@ -33,15 +33,15 @@ A lot of other helpful methods and functions are generated, but let us look at t
 // Jet is an object representing the database table.
 // The required methods to satisfy orm.Table are also generated
 type Jet struct {
-    ID         int              `db:"id,pk" json:"id" toml:"id" yaml:"id"`
-    PilotID    int              `db:"pilot_id" json:"pilot_id" toml:"pilot_id" yaml:"pilot_id"`
-    AirportID  int              `db:"airport_id" json:"airport_id" toml:"airport_id" yaml:"airport_id"`
-    Name       string           `db:"name" json:"name" toml:"name" yaml:"name"`
-    Color      null.Val[string] `db:"color" json:"color,omitempty" toml:"color" yaml:"color,omitempty"`
-    UUID       string           `db:"uuid" json:"uuid" toml:"uuid" yaml:"uuid"`
-    Identifier string           `db:"identifier" json:"identifier" toml:"identifier" yaml:"identifier"`
-    Cargo      []byte           `db:"cargo" json:"cargo" toml:"cargo" yaml:"cargo"`
-    Manifest   []byte           `db:"manifest" json:"manifest" toml:"manifest" yaml:"manifest"`
+    ID         int              `db:"id,pk" json:"id" yaml:"id"`
+    PilotID    int              `db:"pilot_id" json:"pilot_id" yaml:"pilot_id"`
+    AirportID  int              `db:"airport_id" json:"airport_id" yaml:"airport_id"`
+    Name       string           `db:"name" json:"name" yaml:"name"`
+    Color      null.Val[string] `db:"color" json:"color,omitempty" yaml:"color,omitempty"`
+    UUID       string           `db:"uuid" json:"uuid" yaml:"uuid"`
+    Identifier string           `db:"identifier" json:"identifier" yaml:"identifier"`
+    Cargo      []byte           `db:"cargo" json:"cargo" yaml:"cargo"`
+    Manifest   []byte           `db:"manifest" json:"manifest" yaml:"manifest"`
 }
 
 // JetSetter is used for insert/upsert/update operations
@@ -70,7 +70,7 @@ var JetsTable = psql.NewTablex[*Jet, JetSlice, *JetSetter]("", "jets")
 
 :::tip
 
-**JetsTable** gives the full range of capabilites of a Bob model, including
+**JetsTable** gives the full range of capabilities of a Bob model, including
 
 - Flexible queries: One, All, Cursor, Count, Exists
 - Expressions for names and column lists
@@ -97,7 +97,7 @@ err := jet.Update(ctx, db, &models.JetSetter{
 
 UpdateAll is a method on the collection type `JetSlice`.
 
-All rows matching the primary keys of the memebers of the slice are updated with the given values.
+All rows matching the primary keys of the members of the slice are updated with the given values.
 
 ```go
 err := jets.UpdateAll(ctx, db, &JetSetter{
@@ -107,7 +107,7 @@ err := jets.UpdateAll(ctx, db, &JetSetter{
 
 ### Delete
 
-Delete a row from the database mathcing the primary key of the struct.
+Delete a row from the database matching the primary key of the struct.
 
 ```go
 _, err := jet.Delete(ctx, db)
@@ -168,6 +168,68 @@ Use exists to quickly check if a model with a given PK exists.
 ```go
 hasJet, err := models.JetExists(ctx, db, 10).All()
 ```
+
+## Generated Error Constants
+
+Generated error constants allow for matching against specific errors raised by the underlying database driver.
+
+Take the following database table, for example:
+
+```sql
+CREATE TABLE pilots (
+    id serial PRIMARY KEY NOT NULL,
+    first_name text NOT NULL,
+    last_name text NOT NULL,
+    UNIQUE (first_name, last_name)
+);
+```
+
+Bob will define the following `struct` inside the generated `pilots.go` file:
+
+```go
+type pilotErrors struct {
+    ErrUniqueFirstNameAndLastName *UniqueConstraintError
+}
+```
+
+The `struct` is initialized and exported through a `PilotErrors` variable, which can be used for error matching in one of the following ways:
+
+
+```go
+pilot, err := models.Pilots.Insert(ctx, db, setter)
+if errors.Is(models.PilotErrors.ErrUniqueFirstNameAndLastName, err) {
+    // handle the error
+}
+```
+
+or
+
+```go
+pilot, err := models.Pilots.Insert(ctx, db, setter)
+if models.PilotErrors.ErrUniqueFirstNameAndLastName.Is(err) {
+    // handle the error
+}
+```
+
+Bob furthermore defines a generic `ErrUniqueConstraint` constant, which can be used for matching and handling all unique constraint errors:
+
+```go
+pilot, err := models.Pilots.Insert(ctx, db, setter)
+if errors.Is(models.ErrUniqueConstraint, err) {
+    // handle the error
+}
+```
+
+or
+
+```go
+pilot, err := models.Pilots.Insert(ctx, db, setter)
+if models.ErrUniqueConstraint.Is(err) {
+    // handle the error
+}
+```
+
+When using the `errors.Is()` variant, be mindful that the order of arguments matters due to Go's internal implementation. The first argument should be the error constant, while the second argument should be the actual error returned from the database. If you flip the arguments, the function won't work as intended and won't catch the unique constraint error.
 
 ## Query Building
 
@@ -246,7 +308,7 @@ models.SelectJoins.Jets.AliasedAs("j").InnerJoin.Airports(ctx).AliasedAs("a")
 
 ### Column Expressions
 
-For even more control, expresions are generated for every column to be used in any part of the query.
+For even more control, expressions are generated for every column to be used in any part of the query.
 
 ```go
 // SELECT "jets"."name", count(1) FROM "jets"
@@ -255,7 +317,7 @@ For even more control, expresions are generated for every column to be used in a
 // ORDER BY "jets"."pilot_id"
 psql.Select(
     sm.Columns(models.JetColumns.Name, "count(1)"),
-    sm.From(models.JetsTable.Name(ctx)),
+    sm.From(models.JetsTable.Name()),
     sm.Where(models.JetColumns.ID.Between(50, 5000)),
     sm.OrderBy(models.JetColumns.PilotID),
 )

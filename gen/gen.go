@@ -28,22 +28,22 @@ var (
 )
 
 // State holds the global data needed by most pieces to run
-type State struct {
-	Config              Config
+type State[ConstraintExtra any] struct {
+	Config              Config[ConstraintExtra]
 	Outputs             []*Output
 	CustomTemplateFuncs template.FuncMap
 }
 
 // Run executes the templates and outputs them to files based on the
 // state given.
-func Run[T any](ctx context.Context, s *State, driver drivers.Interface[T], plugins ...Plugin) error {
+func Run[T, C, I any](ctx context.Context, s *State[C], driver drivers.Interface[T, C, I], plugins ...Plugin) error {
 	if driver.Dialect() == "" {
 		return fmt.Errorf("no dialect specified")
 	}
 
 	// For StatePlugins
 	for _, plugin := range plugins {
-		if statePlug, ok := plugin.(StatePlugin); ok {
+		if statePlug, ok := plugin.(StatePlugin[C]); ok {
 			err := statePlug.PlugState(s)
 			if err != nil {
 				return fmt.Errorf("StatePlugin Error [%s]: %w", statePlug.Name(), err)
@@ -64,7 +64,7 @@ func Run[T any](ctx context.Context, s *State, driver drivers.Interface[T], plug
 
 	// For DBInfoPlugins
 	for _, plugin := range plugins {
-		if dbPlug, ok := plugin.(DBInfoPlugin[T]); ok {
+		if dbPlug, ok := plugin.(DBInfoPlugin[T, C, I]); ok {
 			err := dbPlug.PlugDBInfo(dbInfo)
 			if err != nil {
 				return fmt.Errorf("StatePlugin Error [%s]: %w", dbPlug.Name(), err)
@@ -110,21 +110,23 @@ func Run[T any](ctx context.Context, s *State, driver drivers.Interface[T], plug
 	}
 
 	if s.Config.Aliases == nil {
-		s.Config.Aliases = make(map[string]TableAlias)
+		s.Config.Aliases = make(map[string]drivers.TableAlias)
 	}
 	initAliases(s.Config.Aliases, dbInfo.Tables, relationships)
 	if err = s.initTags(); err != nil {
 		return fmt.Errorf("unable to initialize struct tags: %w", err)
 	}
 
-	data := &TemplateData[T]{
+	data := &TemplateData[T, C, I]{
 		Dialect:           driver.Dialect(),
 		Tables:            dbInfo.Tables,
+		QueryFolders:      dbInfo.QueryFolders,
 		Enums:             dbInfo.Enums,
 		ExtraInfo:         dbInfo.ExtraInfo,
 		Aliases:           s.Config.Aliases,
 		Types:             types,
 		Relationships:     relationships,
+		NoFactory:         s.Config.NoFactory,
 		NoTests:           s.Config.NoTests,
 		NoBackReferencing: s.Config.NoBackReferencing,
 		StructTagCasing:   s.Config.StructTagCasing,
@@ -132,6 +134,7 @@ func Run[T any](ctx context.Context, s *State, driver drivers.Interface[T], plug
 		Tags:              s.Config.Tags,
 		RelationTag:       s.Config.RelationTag,
 		ModelsPackage:     modPkg,
+		DriverName:        dbInfo.DriverName,
 	}
 
 	for _, v := range s.Config.TagIgnore {
@@ -143,7 +146,7 @@ func Run[T any](ctx context.Context, s *State, driver drivers.Interface[T], plug
 
 	// For TemplateDataPlugins
 	for _, plugin := range plugins {
-		if tdPlug, ok := plugin.(TemplateDataPlugin[T]); ok {
+		if tdPlug, ok := plugin.(TemplateDataPlugin[T, C, I]); ok {
 			err = tdPlug.PlugTemplateData(data)
 			if err != nil {
 				return fmt.Errorf("TemplateDataPlugin Error [%s]: %w", tdPlug.Name(), err)
@@ -154,71 +157,88 @@ func Run[T any](ctx context.Context, s *State, driver drivers.Interface[T], plug
 	return generate(s, data, version)
 }
 
-func generate[T any](s *State, data *TemplateData[T], goVersion string) error {
+func generate[T, C, I any](s *State[C], data *TemplateData[T, C, I], goVersion string) error {
 	knownKeys := make(map[string]struct{})
+	templateByteBuffer := &bytes.Buffer{}
+	templateHeaderByteBuffer := &bytes.Buffer{}
 
 	for _, o := range s.Outputs {
-		if len(o.Templates) == 0 {
-			continue
-		}
-
 		if _, ok := knownKeys[o.Key]; ok {
 			return fmt.Errorf("Duplicate output key: %q", o.Key)
 		}
 		knownKeys[o.Key] = struct{}{}
 
-		// set the package name for this output
-		data.PkgName = o.PkgName
-
-		templates, err := o.initTemplates(s.CustomTemplateFuncs, s.Config.NoTests)
-		if err != nil {
-			return fmt.Errorf("unable to initialize templates: %w", err)
-		}
-
-		tplCount := 0
-		if o.templates != nil {
-			tplCount += len(o.templates.Templates())
-		}
-		if o.testTemplates != nil {
-			tplCount += len(o.testTemplates.Templates())
-		}
-		if tplCount == 0 {
+		if len(o.Templates) == 0 {
 			continue
 		}
 
-		err = o.initOutFolders(templates, s.Config.Wipe)
-		if err != nil {
-			return fmt.Errorf("unable to initialize the output folders: %w", err)
+		if err := o.initTemplates(s.CustomTemplateFuncs); err != nil {
+			return fmt.Errorf("unable to initialize templates: %w", err)
 		}
 
-		if err := generateSingletonOutput(o, data, goVersion); err != nil {
-			return fmt.Errorf("singleton template output: %w", err)
+		if o.numTemplates() == 0 {
+			continue
 		}
 
-		if !s.Config.NoTests {
-			if err := generateSingletonTestOutput(o, data, goVersion); err != nil {
-				return fmt.Errorf("unable to generate singleton test template output: %w", err)
+		iterator := slices.Values([]struct{}{{}})
+
+		if o.Key == "queries" {
+			iterator = func(yield func(struct{}) bool) {
+				for _, folder := range data.QueryFolders {
+					o.PkgName = filepath.Base(folder.Path)
+					o.OutFolder = folder.Path
+					data.QueryFolder = folder
+
+					if !yield(struct{}{}) {
+						return
+					}
+				}
 			}
 		}
 
-		var regularDirExtMap, testDirExtMap dirExtMap
-		regularDirExtMap = groupTemplates(o.templates)
-		if !s.Config.NoTests {
-			testDirExtMap = groupTemplates(o.testTemplates)
-		}
+		for range iterator {
+			// set the package name for this output
+			data.PkgName = o.PkgName
 
-		for _, table := range data.Tables {
-			data.Table = table
-
-			// Generate the regular templates
-			if err := generateOutput(o, regularDirExtMap, data, goVersion); err != nil {
-				return fmt.Errorf("unable to generate output: %w", err)
+			if err := o.initOutFolders(s.Config.Wipe); err != nil {
+				return fmt.Errorf("unable to initialize the output folders: %w", err)
 			}
 
-			// Generate the test templates
-			if !s.Config.NoTests {
-				if err := generateTestOutput(o, testDirExtMap, data, goVersion); err != nil {
-					return fmt.Errorf("unable to generate test output: %w", err)
+			// assign reusable scratch buffers to provided Output
+			o.templateByteBuffer = templateByteBuffer
+			o.templateHeaderByteBuffer = templateHeaderByteBuffer
+
+			if err := generateSingletonOutput(o, data, goVersion, s.Config.NoTests); err != nil {
+				return fmt.Errorf("singleton template output: %w", err)
+			}
+
+			dirExtMap := groupTemplates(o.tableTemplates)
+
+			for _, table := range data.Tables {
+				data.Table = table
+
+				// Generate the regular templates
+				if err := generateOutput(o, dirExtMap, o.tableTemplates, data, goVersion, s.Config.NoTests); err != nil {
+					return fmt.Errorf("unable to generate output: %w", err)
+				}
+			}
+
+			if len(data.QueryFolder.Files) == 0 {
+				continue
+			}
+
+			dirExtMap = groupTemplates(o.queryTemplates)
+			for _, file := range data.QueryFolder.Files {
+				data.QueryFile = file
+
+				// We do this so that the name of the file is correct
+				base := filepath.Base(file.Path)
+				data.Table = drivers.Table[C, I]{
+					Name: base[:len(base)-4],
+				}
+
+				if err := generateOutput(o, dirExtMap, o.queryTemplates, data, goVersion, s.Config.NoTests); err != nil {
+					return fmt.Errorf("unable to generate output: %w", err)
 				}
 			}
 		}
@@ -252,7 +272,7 @@ func initInflections(i Inflections) {
 
 // initTags removes duplicate tags and validates the format
 // of all user tags are simple strings without quotes: [a-zA-Z_\.]+
-func (s *State) initTags() error {
+func (s *State[C]) initTags() error {
 	s.Config.Tags = strmangle.RemoveDuplicates(s.Config.Tags)
 	for _, v := range s.Config.Tags {
 		if !rgxValidTag.MatchString(v) {

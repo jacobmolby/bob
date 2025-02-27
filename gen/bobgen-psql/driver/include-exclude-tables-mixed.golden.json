@@ -1,0 +1,151 @@
+{
+	"tables": [
+		{
+			"key": "bar_baz",
+			"schema": "",
+			"name": "bar_baz",
+			"columns": [
+				{
+					"name": "id",
+					"db_type": "integer",
+					"default": "nextval('bar_baz_id_seq'::regclass)",
+					"comment": "",
+					"nullable": false,
+					"generated": false,
+					"autoincr": false,
+					"domain_name": "",
+					"type": "int32"
+				},
+				{
+					"name": "secret_col",
+					"db_type": "character varying",
+					"default": "",
+					"comment": "",
+					"nullable": false,
+					"generated": false,
+					"autoincr": false,
+					"domain_name": "",
+					"type": "string"
+				}
+			],
+			"indexes": [
+				{
+					"type": "btree",
+					"name": "bar_baz_pkey",
+					"columns": [
+						{
+							"name": "id",
+							"desc": false,
+							"is_expression": false
+						}
+					],
+					"unique": true,
+					"comment": "",
+					"extra": {
+						"nulls_first": [
+							false
+						],
+						"nulls_not_distinct": false,
+						"where_clause": "",
+						"include": []
+					}
+				}
+			],
+			"constraints": {
+				"primary": {
+					"name": "bar_baz_pkey",
+					"columns": [
+						"id"
+					],
+					"comment": "",
+					"extra": null
+				},
+				"foreign": null,
+				"uniques": null,
+				"check": null
+			},
+			"comment": ""
+		},
+		{
+			"key": "bar_qux",
+			"schema": "",
+			"name": "bar_qux",
+			"columns": [
+				{
+					"name": "id",
+					"db_type": "integer",
+					"default": "nextval('bar_qux_id_seq'::regclass)",
+					"comment": "",
+					"nullable": false,
+					"generated": false,
+					"autoincr": false,
+					"domain_name": "",
+					"type": "int32"
+				},
+				{
+					"name": "secret_col",
+					"db_type": "character varying",
+					"default": "",
+					"comment": "",
+					"nullable": false,
+					"generated": false,
+					"autoincr": false,
+					"domain_name": "",
+					"type": "string"
+				}
+			],
+			"indexes": [
+				{
+					"type": "btree",
+					"name": "bar_qux_pkey",
+					"columns": [
+						{
+							"name": "id",
+							"desc": false,
+							"is_expression": false
+						}
+					],
+					"unique": true,
+					"comment": "",
+					"extra": {
+						"nulls_first": [
+							false
+						],
+						"nulls_not_distinct": false,
+						"where_clause": "",
+						"include": []
+					}
+				}
+			],
+			"constraints": {
+				"primary": {
+					"name": "bar_qux_pkey",
+					"columns": [
+						"id"
+					],
+					"comment": "",
+					"extra": null
+				},
+				"foreign": null,
+				"uniques": null,
+				"check": null
+			},
+			"comment": ""
+		}
+	],
+	"query_folders": null,
+	"enums": [
+		{
+			"Type": "UnicodeEnum",
+			"Values": [
+				"hello",
+				"привет",
+				"こんにちは",
+				"안녕하세요",
+				"hello_with_underscore"
+			]
+		}
+	],
+	"extra_info": null,
+	"driver_name": "github.com/lib/pq"
+}

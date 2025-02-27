@@ -13,13 +13,11 @@ import (
 
 // Interface abstracts either a side-effect imported driver or a binary
 // that is called in order to produce the data required for generation.
-type Interface[T any] interface {
+type Interface[DBExtra, ConstraintExtra, IndexExtra any] interface {
 	// The dialect
 	Dialect() string
-	// What the driver is capable of
-	Capabilities() Capabilities
 	// Assemble the database information into a nice struct
-	Assemble(ctx context.Context) (*DBInfo[T], error)
+	Assemble(ctx context.Context) (*DBInfo[DBExtra, ConstraintExtra, IndexExtra], error)
 	// Custom types defined by the driver
 	Types() Types
 }
@@ -54,13 +52,14 @@ type Type struct {
 
 type Types map[string]Type
 
-type Capabilities struct{}
-
 // DBInfo is the database's table data and dialect.
-type DBInfo[T any] struct {
-	Tables    []Table `json:"tables"`
-	Enums     []Enum  `json:"enums"`
-	ExtraInfo T       `json:"extra_info"`
+type DBInfo[DBExtra, ConstraintExtra, IndexExtra any] struct {
+	Tables       Tables[ConstraintExtra, IndexExtra] `json:"tables"`
+	QueryFolders []QueryFolder                       `json:"query_folders"`
+	Enums        []Enum                              `json:"enums"`
+	ExtraInfo    DBExtra                             `json:"extra_info"`
+	// DriverName is the module name of the underlying `database/sql` driver
+	DriverName string `json:"driver_name"`
 }
 
 type Enum struct {
@@ -71,9 +70,10 @@ type Enum struct {
 type TablesInfo []TableInfo
 
 type TableInfo struct {
-	Key    string
-	Schema string
-	Name   string
+	Key     string
+	Schema  string
+	Name    string
+	Comment string
 }
 
 func (t TablesInfo) Keys() []string {
@@ -87,24 +87,27 @@ func (t TablesInfo) Keys() []string {
 // Constructor breaks down the functionality required to implement a driver
 // such that the drivers.Tables method can be used to reduce duplication in driver
 // implementations.
-type Constructor interface {
-	// Load all constraints in the database, keyed by TableInfo.Key
-	Constraints(context.Context, ColumnFilter) (DBConstraints, error)
-
-	// Load all indexes in the database, keyed by TableInfo.Key
-	Indexes(ctx context.Context) (DBIndexes, error)
-
+type Constructor[ConstraintExtra, IndexExtra any] interface {
 	// Load basic info about all tables
 	TablesInfo(context.Context, Filter) (TablesInfo, error)
 	// Load details about a single table
 	TableDetails(ctx context.Context, info TableInfo, filter ColumnFilter) (schema, name string, _ []Column, _ error)
+	// Load all table comments, keyed by TableInfo.Key
+	Comments(ctx context.Context) (map[string]string, error)
+	// Load all constraints in the database, keyed by TableInfo.Key
+	Constraints(context.Context, ColumnFilter) (DBConstraints[ConstraintExtra], error)
+	// Load all indexes in the database, keyed by TableInfo.Key
+	Indexes(ctx context.Context) (DBIndexes[IndexExtra], error)
 }
 
-// TablesConcurrently is a concurrent version of BuildDBInfo. It returns the
-// metadata for all tables, minus the tables specified in the excludes.
-func BuildDBInfo(ctx context.Context, c Constructor, concurrency int, only, except map[string][]string) ([]Table, error) {
+// This returns the metadata for all tables,
+// minus the tables specified in the excludes.
+func BuildDBInfo[DBExtra, ConstraintExtra, IndexExtra any](
+	ctx context.Context, c Constructor[ConstraintExtra, IndexExtra],
+	concurrency int, only, except map[string][]string,
+) ([]Table[ConstraintExtra, IndexExtra], error) {
 	var err error
-	var ret []Table
+	var ret []Table[ConstraintExtra, IndexExtra]
 
 	if concurrency < 1 {
 		concurrency = 1
@@ -124,6 +127,14 @@ func BuildDBInfo(ctx context.Context, c Constructor, concurrency int, only, exce
 		return nil, fmt.Errorf("unable to load tables: %w", err)
 	}
 
+	comments, err := c.Comments(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unable to load comments: %w", err)
+	}
+	for i, t := range ret {
+		ret[i].Comment = comments[t.Key]
+	}
+
 	constraints, err := c.Constraints(ctx, colFilter)
 	if err != nil {
 		return nil, fmt.Errorf("unable to load constraints: %w", err)
@@ -132,6 +143,7 @@ func BuildDBInfo(ctx context.Context, c Constructor, concurrency int, only, exce
 		ret[i].Constraints.Primary = constraints.PKs[t.Key]
 		ret[i].Constraints.Foreign = constraints.FKs[t.Key]
 		ret[i].Constraints.Uniques = constraints.Uniques[t.Key]
+		ret[i].Constraints.Checks = constraints.Checks[t.Key]
 	}
 
 	indexes, err := c.Indexes(ctx)
@@ -145,12 +157,12 @@ func BuildDBInfo(ctx context.Context, c Constructor, concurrency int, only, exce
 	return ret, nil
 }
 
-func tables(ctx context.Context, c Constructor, concurrency int, infos TablesInfo, filter ColumnFilter) ([]Table, error) {
+func tables[C, I any](ctx context.Context, c Constructor[C, I], concurrency int, infos TablesInfo, filter ColumnFilter) ([]Table[C, I], error) {
 	sort.Slice(infos, func(i, j int) bool {
 		return infos[i].Key < infos[j].Key
 	})
 
-	ret := make([]Table, len(infos))
+	ret := make([]Table[C, I], len(infos))
 
 	limiter := newConcurrencyLimiter(concurrency)
 	wg := sync.WaitGroup{}
@@ -181,14 +193,14 @@ func tables(ctx context.Context, c Constructor, concurrency int, infos TablesInf
 }
 
 // table returns columns info for a given table
-func table(ctx context.Context, c Constructor, info TableInfo, filter ColumnFilter) (Table, error) {
+func table[C, I any](ctx context.Context, c Constructor[C, I], info TableInfo, filter ColumnFilter) (Table[C, I], error) {
 	var err error
-	t := Table{
+	t := Table[C, I]{
 		Key: info.Key,
 	}
 
 	if t.Schema, t.Name, t.Columns, err = c.TableDetails(ctx, info, filter); err != nil {
-		return Table{}, fmt.Errorf("unable to fetch table column info (%s): %w", info.Key, err)
+		return Table[C, I]{}, fmt.Errorf("unable to fetch table column info (%s): %w", info.Key, err)
 	}
 
 	return t, nil

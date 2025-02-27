@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strings"
+	"sync"
 
 	"github.com/lib/pq"
 	helpers "github.com/stephenafamo/bob/gen/bobgen-helpers"
@@ -19,8 +21,14 @@ import (
 var rgxValidColumnName = regexp.MustCompile(`(?i)^[a-z_][a-z0-9_]*$`)
 
 type (
-	Interface = drivers.Interface[any]
-	DBInfo    = drivers.DBInfo[any]
+	Interface  = drivers.Interface[any, any, IndexExtra]
+	DBInfo     = drivers.DBInfo[any, any, IndexExtra]
+	IndexExtra = struct {
+		NullsFirst    []bool   `json:"nulls_first"` // same length as Columns
+		NullsDistinct bool     `json:"nulls_not_distinct"`
+		Where         string   `json:"where_clause"`
+		Include       []string `json:"include"`
+	}
 )
 
 type Enum struct {
@@ -47,6 +55,8 @@ type Config struct {
 	Concurrency int
 	// Which UUID package to use (gofrs or google)
 	UUIDPkg string `yaml:"uuid_pkg"`
+	// Which `database/sql` driver to use (the full module name)
+	DriverName string `yaml:"driver_name"`
 
 	//-------
 
@@ -69,6 +79,10 @@ func New(config Config) Interface {
 
 	if config.UUIDPkg == "" {
 		config.UUIDPkg = "gofrs"
+	}
+
+	if config.DriverName == "" {
+		config.DriverName = "github.com/lib/pq"
 	}
 
 	if config.Concurrency < 1 {
@@ -103,6 +117,7 @@ type driver struct {
 	conn   *sql.DB
 	enums  []Enum
 	types  drivers.Types
+	mu     sync.Mutex
 }
 
 func (d *driver) Dialect() string {
@@ -111,10 +126,6 @@ func (d *driver) Dialect() string {
 
 func (d *driver) Types() drivers.Types {
 	return d.types
-}
-
-func (d *driver) Capabilities() drivers.Capabilities {
-	return drivers.Capabilities{}
 }
 
 // Assemble all the information we need to provide back to the driver
@@ -132,14 +143,14 @@ func (d *driver) Assemble(ctx context.Context) (*DBInfo, error) {
 	}
 	defer d.conn.Close()
 
-	dbinfo = &DBInfo{}
+	dbinfo = &DBInfo{DriverName: d.config.DriverName}
 
 	// drivers.Tables call translateColumnType which uses Enums
 	if err := d.loadEnums(ctx); err != nil {
 		return nil, fmt.Errorf("unable to load enums: %w", err)
 	}
 
-	dbinfo.Tables, err = drivers.BuildDBInfo(ctx, d, d.config.Concurrency, d.config.Only, d.config.Except)
+	dbinfo.Tables, err = drivers.BuildDBInfo[any](ctx, d, d.config.Concurrency, d.config.Only, d.config.Except)
 	if err != nil {
 		return nil, err
 	}
@@ -189,17 +200,35 @@ func (d *driver) TablesInfo(ctx context.Context, tableFilter drivers.Filter) (dr
 	exclude := tableFilter.Except
 
 	if len(include) > 0 {
-		query += fmt.Sprintf(" and %s in (%s)", keyClause, strmangle.Placeholders(true, len(include), 3, 1))
-		for _, w := range include {
-			args = append(args, w)
+		var subqueries []string
+		stringPatterns, regexPatterns := tableFilter.ClassifyPatterns(include)
+		if len(stringPatterns) > 0 {
+			subqueries = append(subqueries, fmt.Sprintf("%s in (%s)", keyClause, strmangle.Placeholders(true, len(stringPatterns), len(args)+1, 1)))
+			for _, w := range stringPatterns {
+				args = append(args, w)
+			}
 		}
+		if len(regexPatterns) > 0 {
+			subqueries = append(subqueries, fmt.Sprintf("%s ~ (%s)", keyClause, strmangle.Placeholders(true, 1, len(args)+1, 1)))
+			args = append(args, strings.Join(regexPatterns, "|"))
+		}
+		query += fmt.Sprintf(" and (%s)", strings.Join(subqueries, " or "))
 	}
 
 	if len(exclude) > 0 {
-		query += fmt.Sprintf(" and %s not in (%s)", keyClause, strmangle.Placeholders(true, len(exclude), 3+len(include), 1))
-		for _, w := range exclude {
-			args = append(args, w)
+		var subqueries []string
+		stringPatterns, regexPatterns := tableFilter.ClassifyPatterns(exclude)
+		if len(stringPatterns) > 0 {
+			subqueries = append(subqueries, fmt.Sprintf("%s not in (%s)", keyClause, strmangle.Placeholders(true, len(stringPatterns), len(args)+1, 1)))
+			for _, w := range stringPatterns {
+				args = append(args, w)
+			}
 		}
+		if len(regexPatterns) > 0 {
+			subqueries = append(subqueries, fmt.Sprintf("%s !~ (%s)", keyClause, strmangle.Placeholders(true, 1, len(args)+1, 1)))
+			args = append(args, strings.Join(regexPatterns, "|"))
+		}
+		query += fmt.Sprintf(" and (%s)", strings.Join(subqueries, " and "))
 	}
 
 	query += ` order by table_name;`
@@ -423,30 +452,52 @@ func (d *driver) loadEnums(ctx context.Context) error {
 	return nil
 }
 
-func (d *driver) Indexes(ctx context.Context) (drivers.DBIndexes, error) {
-	ret := drivers.DBIndexes{}
+func (d *driver) Indexes(ctx context.Context) (drivers.DBIndexes[IndexExtra], error) {
+	ret := drivers.DBIndexes[IndexExtra]{}
 
-	query := `SELECT
-	n.nspname AS schema_name,
-	t.relname AS table_name,
-	i.relname AS index_name,
-	ARRAY(
-		SELECT pg_get_indexdef(x.indexrelid, k + 1, true)
-		FROM generate_subscripts(x.indkey, 1) as k
-		ORDER BY k
-	) AS index_cols
-	FROM pg_index x
-	JOIN pg_class t ON t.oid = x.indrelid
-	JOIN pg_class i ON i.oid = x.indexrelid
-	JOIN pg_namespace n ON n.oid = t.relnamespace
+	query := `SELECT	
+          n.nspname AS schema_name,
+          t.relname AS table_name,
+          i.relname AS index_name,
+          a.amname AS type,
+          cols.cols[:x.indnkeyatts] AS index_cols,
+          ARRAY(SELECT unnest(x.indoption) & 1 = 1 ) AS descending,
+          ARRAY(SELECT unnest(x.indoption) & 2 = 2 ) AS nulls_first,
+          x.indisunique as unique,
+          x.indnullsnotdistinct as nulls_not_distinct,
+          pg_get_expr(x.indpred, x.indrelid) AS where_clause,
+          cols.cols[x.indnkeyatts+1:] AS included_cols,
+          obj_description(x.indexrelid, 'pg_class') AS comment
+	  FROM pg_index x
+	  JOIN pg_class t ON t.oid = x.indrelid
+	  JOIN pg_class i ON i.oid = x.indexrelid
+      JOIN pg_am a on i.relam = a.oid
+	  JOIN pg_namespace n ON n.oid = t.relnamespace
+	  JOIN (
+	    SELECT x.indexrelid, array_agg(cols.cols) cols
+      FROM pg_index x
+        LEFT JOIN (SELECT a.attrelid, pg_get_indexdef(a.attrelid, a.attnum, TRUE) AS cols
+          FROM pg_attribute a) cols ON cols.attrelid = x.indexrelid
+      WHERE cols IS NOT NULL
+      GROUP BY x.indexrelid
+    ) cols ON cols.indexrelid = x.indexrelid
 	WHERE n.nspname = ANY($1)
-	ORDER BY n.nspname, t.relname, i.relname`
+	    AND x.indisvalid AND x.indislive AND x.indisvalid
+	ORDER BY n.nspname, t.relname, x.indisprimary DESC, i.relname;`
 
 	type indexColumns struct {
-		SchemaName string
-		TableName  string
-		IndexName  string
-		IndexCols  pq.StringArray // a list of column names and/or expressions
+		SchemaName       string
+		TableName        string
+		IndexName        string
+		Type             string
+		IndexCols        pq.StringArray // a list of column names and/or expressions
+		Descending       pq.BoolArray
+		NullsFirst       pq.BoolArray
+		Unique           bool
+		NullsNotDistinct bool
+		WhereClause      sql.NullString
+		IncludedCols     pq.StringArray
+		Comment          sql.NullString
 	}
 	res, err := stdscan.All(ctx, d.conn, scan.StructMapper[indexColumns](), query, d.config.Schemas)
 	if err != nil {
@@ -457,17 +508,63 @@ func (d *driver) Indexes(ctx context.Context) (drivers.DBIndexes, error) {
 		if r.SchemaName != "" && r.SchemaName != d.config.SharedSchema {
 			key = r.SchemaName + "." + r.TableName
 		}
-		var index drivers.Index
-		index.Name = r.IndexName
-		for _, colName := range r.IndexCols {
-			if rgxValidColumnName.MatchString(colName) {
-				index.Columns = append(index.Columns, colName)
-			} else {
-				index.Expressions = append(index.Expressions, colName)
-			}
+		index := drivers.Index[IndexExtra]{
+			Type:    r.Type,
+			Name:    r.IndexName,
+			Unique:  r.Unique,
+			Comment: r.Comment.String,
+			Extra: IndexExtra{
+				NullsFirst:    r.NullsFirst,
+				NullsDistinct: r.NullsNotDistinct,
+				Where:         r.WhereClause.String,
+				Include:       r.IncludedCols,
+			},
+		}
+		for i, colName := range r.IndexCols {
+			isExpression := !rgxValidColumnName.MatchString(colName)
+			index.Columns = append(index.Columns, drivers.IndexColumn{
+				Name:         colName,
+				Desc:         r.Descending[i],
+				IsExpression: isExpression,
+			})
 		}
 		ret[key] = append(ret[key], index)
 	}
 
 	return ret, nil
+}
+
+func (d *driver) Comments(ctx context.Context) (map[string]string, error) {
+	query := fmt.Sprintf(`SELECT
+	  %s AS "key",
+      obj_description((table_schema||'.'||table_name)::regclass::oid, 'pg_class') AS comment
+	FROM (
+	  SELECT
+		table_name,
+		table_schema
+	  FROM
+		information_schema.tables
+	  UNION
+	  SELECT
+		matviewname AS table_name,
+		schemaname AS table_schema
+	  FROM
+		pg_matviews) AS v
+	WHERE
+	  v.table_schema = ANY ($2)`, keyClause)
+	args := []any{d.config.SharedSchema, d.config.Schemas}
+
+	comments := make(map[string]string)
+
+	for row, err := range stdscan.Each(ctx, d.conn, scan.StructMapper[struct {
+		Key     string
+		Comment sql.NullString
+	}](), query, args...) {
+		if err != nil {
+			return nil, err
+		}
+		comments[row.Key] = row.Comment.String
+	}
+
+	return comments, nil
 }

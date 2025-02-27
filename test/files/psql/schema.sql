@@ -75,7 +75,7 @@ create table type_monsters (
 
 	bool_zero   bool,
 	bool_one    bool null,
-	bool_two    bool not null,
+	bool_two    bool not null CONSTRAINT check_not_null CHECK(bool_two IS NOT NULL),
 	bool_three  bool null default false,
 	bool_four   bool null default true,
 	bool_five   bool not null default false,
@@ -279,9 +279,42 @@ CREATE TABLE test_index_expressions (
     col2 int,
     col3 int
 );
+
 CREATE INDEX idx1 ON test_index_expressions ((col1 + col2));
 CREATE INDEX idx2 ON test_index_expressions ((col1 + col2), col3);
 CREATE INDEX idx3 ON test_index_expressions (col1, (col2 + col3));
 CREATE INDEX idx4 ON test_index_expressions (col3);
 CREATE INDEX idx5 ON test_index_expressions (col1 DESC, col2 DESC);
 CREATE INDEX idx6 ON test_index_expressions (POW(col3, 2));
+
+CREATE TABLE foo_bar (
+    id SERIAL PRIMARY KEY,
+    secret_col VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE foo_baz (
+    id SERIAL PRIMARY KEY,
+    secret_col VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE foo_qux (
+    id SERIAL PRIMARY KEY,
+    secret_col VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE bar_baz (
+    id SERIAL PRIMARY KEY,
+    secret_col VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE bar_qux (
+    id SERIAL PRIMARY KEY,
+    secret_col VARCHAR(255) NOT NULL
+);
+
+-- Add comments
+COMMENT ON TABLE type_monsters IS 'This is a table';
+COMMENT ON VIEW type_monsters_v IS 'This is a view';
+COMMENT ON MATERIALIZED VIEW  type_monsters_mv IS 'This is a materialized view';
+COMMENT ON INDEX idx1 IS 'This is an index';
+COMMENT ON CONSTRAINT check_not_null ON type_monsters IS 'This is a constraint';

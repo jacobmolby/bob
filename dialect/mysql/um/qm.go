@@ -17,13 +17,13 @@ func Recursive(r bool) bob.Mod[*dialect.UpdateQuery] {
 }
 
 func LowPriority() bob.Mod[*dialect.UpdateQuery] {
-	return mods.QueryModFunc[*dialect.UpdateQuery](func(i *dialect.UpdateQuery) {
+	return bob.ModFunc[*dialect.UpdateQuery](func(i *dialect.UpdateQuery) {
 		i.AppendModifier("LOW_PRIORITY")
 	})
 }
 
 func Ignore() bob.Mod[*dialect.UpdateQuery] {
-	return mods.QueryModFunc[*dialect.UpdateQuery](func(i *dialect.UpdateQuery) {
+	return bob.ModFunc[*dialect.UpdateQuery](func(i *dialect.UpdateQuery) {
 		i.AppendModifier("IGNORE")
 	})
 }
@@ -44,16 +44,16 @@ func RightJoin(e any) dialect.JoinChain[*dialect.UpdateQuery] {
 	return dialect.RightJoin[*dialect.UpdateQuery](e)
 }
 
-func CrossJoin(e any) bob.Mod[*dialect.UpdateQuery] {
+func CrossJoin(e any) dialect.JoinChain[*dialect.UpdateQuery] {
 	return dialect.CrossJoin[*dialect.UpdateQuery](e)
 }
 
-func StraightJoin(e any) bob.Mod[*dialect.UpdateQuery] {
+func StraightJoin(e any) dialect.JoinChain[*dialect.UpdateQuery] {
 	return dialect.StraightJoin[*dialect.UpdateQuery](e)
 }
 
 func Set(sets ...bob.Expression) bob.Mod[*dialect.UpdateQuery] {
-	return mods.QueryModFunc[*dialect.UpdateQuery](func(q *dialect.UpdateQuery) {
+	return bob.ModFunc[*dialect.UpdateQuery](func(q *dialect.UpdateQuery) {
 		q.Set.Set = append(q.Set.Set, internal.ToAnySlice(sets)...)
 	})
 }

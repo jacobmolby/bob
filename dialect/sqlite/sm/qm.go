@@ -16,7 +16,7 @@ func Recursive(r bool) bob.Mod[*dialect.SelectQuery] {
 }
 
 func Distinct() bob.Mod[*dialect.SelectQuery] {
-	return mods.QueryModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
+	return bob.ModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
 		q.Distinct = true
 	})
 }
@@ -45,7 +45,7 @@ func FullJoin(e any) dialect.JoinChain[*dialect.SelectQuery] {
 	return dialect.FullJoin[*dialect.SelectQuery](e)
 }
 
-func CrossJoin(e any) bob.Mod[*dialect.SelectQuery] {
+func CrossJoin(e any) dialect.CrossJoinChain[*dialect.SelectQuery] {
 	return dialect.CrossJoin[*dialect.SelectQuery](e)
 }
 
@@ -63,15 +63,16 @@ func GroupBy(e any) bob.Mod[*dialect.SelectQuery] {
 	}
 }
 
-func Window(name string) dialect.WindowsMod[*dialect.SelectQuery] {
-	m := dialect.WindowsMod[*dialect.SelectQuery]{
-		Name: name,
+func Window(name string, winMods ...bob.Mod[*clause.Window]) bob.Mod[*dialect.SelectQuery] {
+	w := clause.Window{}
+	for _, mod := range winMods {
+		mod.Apply(&w)
 	}
 
-	m.WindowChain = &dialect.WindowChain[*dialect.WindowsMod[*dialect.SelectQuery]]{
-		Wrap: &m,
-	}
-	return m
+	return mods.NamedWindow[*dialect.SelectQuery](clause.NamedWindow{
+		Name:       name,
+		Definition: w,
+	})
 }
 
 func OrderBy(e any) dialect.OrderBy[*dialect.SelectQuery] {

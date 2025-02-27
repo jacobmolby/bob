@@ -1,8 +1,6 @@
 package dialect
 
 import (
-	"io"
-
 	"github.com/stephenafamo/bob"
 	"github.com/stephenafamo/bob/clause"
 	"github.com/stephenafamo/bob/expr"
@@ -138,7 +136,7 @@ func (f FromChain[Q]) ForceIndexForGroupBy(first string, others ...string) FromC
 }
 
 func Partition[Q interface{ AppendPartition(...string) }](partitions ...string) bob.Mod[Q] {
-	return mods.QueryModFunc[Q](func(q Q) {
+	return bob.ModFunc[Q](func(q Q) {
 		q.AppendPartition(partitions...)
 	})
 }
@@ -189,11 +187,11 @@ func RightJoin[Q Joinable](e any) JoinChain[Q] {
 	return Join[Q](clause.RightJoin, e)
 }
 
-func CrossJoin[Q Joinable](e any) bob.Mod[Q] {
+func CrossJoin[Q Joinable](e any) JoinChain[Q] {
 	return Join[Q](clause.CrossJoin, e)
 }
 
-func StraightJoin[Q Joinable](e any) bob.Mod[Q] {
+func StraightJoin[Q Joinable](e any) JoinChain[Q] {
 	return Join[Q](clause.StraightJoin, e)
 }
 
@@ -283,9 +281,9 @@ func (o OrderBy[Q]) Desc() OrderBy[Q] {
 	})
 }
 
-func (o OrderBy[Q]) Collate(collation string) OrderBy[Q] {
+func (o OrderBy[Q]) Collate(collationName string) OrderBy[Q] {
 	order := o()
-	order.CollationName = collation
+	order.Collation = collationName
 
 	return OrderBy[Q](func() clause.OrderDef {
 		return order
@@ -326,110 +324,4 @@ func (l LockChain[Q]) SkipLocked() LockChain[Q] {
 	return LockChain[Q](func() clause.For {
 		return lock
 	})
-}
-
-type WindowMod[Q interface{ SetWindow(clause.Window) }] struct {
-	*WindowChain[*WindowMod[Q]]
-}
-
-func (w WindowMod[Q]) Apply(q Q) {
-	q.SetWindow(w.def)
-}
-
-type WindowsMod[Q interface{ AppendWindow(clause.NamedWindow) }] struct {
-	Name string
-	*WindowChain[*WindowsMod[Q]]
-}
-
-func (w WindowsMod[Q]) Apply(q Q) {
-	q.AppendWindow(clause.NamedWindow{
-		Name:       w.Name,
-		Definition: w.def,
-	})
-}
-
-type WindowChain[T any] struct {
-	def  clause.Window
-	Wrap T
-}
-
-func (w *WindowChain[T]) From(name string) T {
-	w.def.SetFrom(name)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) PartitionBy(condition ...any) T {
-	w.def.AddPartitionBy(condition...)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) OrderBy(order ...any) T {
-	w.def.AddOrderBy(order...)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) Range() T {
-	w.def.SetMode("RANGE")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) Rows() T {
-	w.def.SetMode("ROWS")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) FromUnboundedPreceding() T {
-	w.def.SetStart("UNBOUNDED PRECEDING")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) FromPreceding(exp any) T {
-	w.def.SetStart(bob.ExpressionFunc(
-		func(w io.Writer, d bob.Dialect, start int) ([]any, error) {
-			return bob.ExpressIf(w, d, start, exp, true, "", " PRECEDING")
-		}),
-	)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) FromCurrentRow() T {
-	w.def.SetStart("CURRENT ROW")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) FromFollowing(exp any) T {
-	w.def.SetStart(bob.ExpressionFunc(
-		func(w io.Writer, d bob.Dialect, start int) ([]any, error) {
-			return bob.ExpressIf(w, d, start, exp, true, "", " FOLLOWING")
-		}),
-	)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) ToPreceding(exp any) T {
-	w.def.SetEnd(bob.ExpressionFunc(
-		func(w io.Writer, d bob.Dialect, start int) ([]any, error) {
-			return bob.ExpressIf(w, d, start, exp, true, "", " PRECEDING")
-		}),
-	)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) ToCurrentRow(count int) T {
-	w.def.SetEnd("CURRENT ROW")
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) ToFollowing(exp any) T {
-	w.def.SetEnd(bob.ExpressionFunc(
-		func(w io.Writer, d bob.Dialect, start int) ([]any, error) {
-			return bob.ExpressIf(w, d, start, exp, true, "", " FOLLOWING")
-		}),
-	)
-	return w.Wrap
-}
-
-func (w *WindowChain[T]) ToUnboundedFollowing() T {
-	w.def.SetEnd("UNBOUNDED FOLLOWING")
-	return w.Wrap
 }

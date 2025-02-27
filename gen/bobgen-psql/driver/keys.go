@@ -10,11 +10,12 @@ import (
 	"github.com/stephenafamo/scan/stdscan"
 )
 
-func (d *driver) Constraints(ctx context.Context, _ drivers.ColumnFilter) (drivers.DBConstraints, error) {
-	ret := drivers.DBConstraints{
-		PKs:     map[string]*drivers.Constraint{},
-		FKs:     map[string][]drivers.ForeignKey{},
-		Uniques: map[string][]drivers.Constraint{},
+func (d *driver) Constraints(ctx context.Context, _ drivers.ColumnFilter) (drivers.DBConstraints[any], error) {
+	ret := drivers.DBConstraints[any]{
+		PKs:     map[string]*drivers.Constraint[any]{},
+		FKs:     map[string][]drivers.ForeignKey[any]{},
+		Uniques: map[string][]drivers.Constraint[any]{},
+		Checks:  map[string][]drivers.Check[any]{},
 	}
 
 	query := `SELECT 
@@ -26,6 +27,8 @@ func (d *driver) Constraints(ctx context.Context, _ drivers.ColumnFilter) (drive
 		, max(out.relname) as foreign_table
 		, max(local_cols.columns) as columns
 		, max(foreign_cols.columns) as foreign_columns
+		, max(pg_get_expr(con.conbin, rel.oid)) AS check_expr
+		, max(obj_description(con.oid, 'pg_constraint')) AS comment
 	FROM pg_catalog.pg_constraint con
 	
 	INNER JOIN pg_catalog.pg_class rel
@@ -61,7 +64,7 @@ func (d *driver) Constraints(ctx context.Context, _ drivers.ColumnFilter) (drive
 	AND foreign_cols.table_name = out.relname
 		
 	WHERE nsp.nspname = ANY($1)
-	AND con.contype IN ('p', 'f', 'u')
+	AND con.contype IN ('p', 'f', 'u', 'c')
 	GROUP BY nsp.nspname, rel.relname, name, con.contype
 	ORDER BY nsp.nspname, rel.relname, name, con.contype`
 
@@ -74,6 +77,8 @@ func (d *driver) Constraints(ctx context.Context, _ drivers.ColumnFilter) (drive
 		ForeignSchema  sql.NullString
 		ForeignTable   sql.NullString
 		ForeignColumns pq.StringArray
+		CheckExpr      sql.NullString
+		Comment        sql.NullString
 	}](), query, d.config.Schemas)
 	if err != nil {
 		return ret, err
@@ -87,25 +92,42 @@ func (d *driver) Constraints(ctx context.Context, _ drivers.ColumnFilter) (drive
 
 		switch c.Type {
 		case "p":
-			ret.PKs[key] = &drivers.Constraint{
+			ret.PKs[key] = &drivers.Constraint[any]{
 				Name:    c.Name,
 				Columns: c.Columns,
+				Comment: c.Comment.String,
 			}
+
 		case "u":
-			ret.Uniques[key] = append(ret.Uniques[c.Table], drivers.Constraint{
+			ret.Uniques[key] = append(ret.Uniques[c.Table], drivers.Constraint[any]{
 				Name:    c.Name,
 				Columns: c.Columns,
+				Comment: c.Comment.String,
 			})
+
 		case "f":
 			fkey := c.ForeignTable.String
 			if c.ForeignSchema.Valid && c.ForeignSchema.String != d.config.SharedSchema {
 				fkey = c.ForeignSchema.String + "." + c.ForeignTable.String
 			}
-			ret.FKs[key] = append(ret.FKs[key], drivers.ForeignKey{
-				Name:           key + "." + c.Name,
-				Columns:        c.Columns,
+			ret.FKs[key] = append(ret.FKs[key], drivers.ForeignKey[any]{
+				Constraint: drivers.Constraint[any]{
+					Name:    key + "." + c.Name,
+					Columns: c.Columns,
+					Comment: c.Comment.String,
+				},
 				ForeignTable:   fkey,
 				ForeignColumns: c.ForeignColumns,
+			})
+
+		case "c":
+			ret.Checks[key] = append(ret.Checks[key], drivers.Check[any]{
+				Constraint: drivers.Constraint[any]{
+					Name:    c.Name,
+					Columns: c.Columns,
+					Comment: c.Comment.String,
+				},
+				Expression: c.CheckExpr.String,
 			})
 		}
 	}
