@@ -52,9 +52,7 @@ func Run[T, C, I any](ctx context.Context, s *State[C], driver drivers.Interface
 	}
 
 	if len(s.Config.Generator) > 0 {
-		noEditDisclaimer = []byte(
-			fmt.Sprintf(noEditDisclaimerFmt, " by "+s.Config.Generator),
-		)
+		noEditDisclaimer = fmt.Appendf(nil, noEditDisclaimerFmt, " by "+s.Config.Generator)
 	}
 
 	dbInfo, err := driver.Assemble(ctx)
@@ -139,7 +137,7 @@ func Run[T, C, I any](ctx context.Context, s *State[C], driver drivers.Interface
 
 	for _, v := range s.Config.TagIgnore {
 		if !rgxValidTableColumn.MatchString(v) {
-			return errors.New("Invalid column name %q supplied, only specify column name or table.column, eg: created_at, user.password")
+			return errors.New("invalid column name %q supplied, only specify column name or table.column, eg: created_at, user.password")
 		}
 		data.TagIgnore[v] = struct{}{}
 	}
@@ -164,7 +162,7 @@ func generate[T, C, I any](s *State[C], data *TemplateData[T, C, I], goVersion s
 
 	for _, o := range s.Outputs {
 		if _, ok := knownKeys[o.Key]; ok {
-			return fmt.Errorf("Duplicate output key: %q", o.Key)
+			return fmt.Errorf("duplicate output key: %q", o.Key)
 		}
 		knownKeys[o.Key] = struct{}{}
 
@@ -276,7 +274,7 @@ func (s *State[C]) initTags() error {
 	s.Config.Tags = strmangle.RemoveDuplicates(s.Config.Tags)
 	for _, v := range s.Config.Tags {
 		if !rgxValidTag.MatchString(v) {
-			return errors.New("Invalid tag format %q supplied, only specify name, eg: xml")
+			return errors.New("invalid tag format %q supplied, only specify name, eg: xml")
 		}
 	}
 
@@ -312,7 +310,8 @@ func modelsPackage(outputs []*Output) (string, string, error) {
 	}
 
 	relPath := strings.TrimPrefix(fullPath, modRoot)
-	return path.Join(modFile.Module.Mod.Path, filepath.ToSlash(relPath)), modFile.Go.Version, nil
+
+	return path.Join(modFile.Module.Mod.Path, filepath.ToSlash(relPath)), getGoVersion(modFile), nil
 }
 
 // goModInfo returns the main module's root directory
@@ -368,4 +367,13 @@ func findGoMod(path string) (string, error) {
 	}
 
 	return out, nil
+}
+
+// getGoVersion returns the required go version from the package
+func getGoVersion(modFile *modfile.File) string {
+	if modFile.Toolchain != nil {
+		return modFile.Toolchain.Name
+	}
+
+	return strings.Join(modFile.Go.Syntax.Token, "")
 }

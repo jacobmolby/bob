@@ -5,6 +5,7 @@ package drivers
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 
@@ -48,6 +49,8 @@ type Type struct {
 	CompareExpr string `yaml:"compare_expr"`
 	// Imports needed for the compare expression
 	CompareExprImports importers.List `yaml:"compare_expr_imports"`
+	// If factory generation should have "models." prefix
+	InGeneratedPackage bool `yaml:"in_generated_package"`
 }
 
 type Types map[string]Type
@@ -211,7 +214,7 @@ type concurrencyLimiter chan struct{}
 
 func newConcurrencyLimiter(capacity int) concurrencyLimiter {
 	ret := make(concurrencyLimiter, capacity)
-	for i := 0; i < capacity; i++ {
+	for range capacity {
 		ret <- struct{}{}
 	}
 
@@ -229,20 +232,10 @@ func (c concurrencyLimiter) put() {
 func Skip(name string, include, exclude []string) bool {
 	switch {
 	case len(include) > 0:
-		for _, i := range include {
-			if i == name {
-				return false
-			}
-		}
-		return true
+		return !slices.Contains(include, name)
 
 	case len(exclude) > 0:
-		for _, i := range exclude {
-			if i == name {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(exclude, name)
 
 	default:
 		return false
