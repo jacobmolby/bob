@@ -39,7 +39,7 @@ func (o {{$tAlias.UpSingular}}Slice) pkIN() dialect.Expression {
     .In(bob.ExpressionFunc(func(ctx context.Context, w io.Writer, d bob.Dialect, start int) ([]any, error){
       pkPairs := make([]bob.Expression, len(o))
       for i, row := range o {
-        pkPairs[i] = row.PrimaryKeyVals()
+        pkPairs[i] = row.primaryKeyVals()
       }
       return bob.ExpressSlice(ctx, w, d, start, pkPairs, "", ", ", "")
     }))
@@ -53,7 +53,7 @@ func (o {{$tAlias.UpSingular}}Slice) copyMatchingRows(from ...*{{$tAlias.UpSingu
     for _, new := range from {
 			{{range $column := $table.Constraints.Primary.Columns -}}
 				{{- $colAlias := $tAlias.Column $column -}}
-				{{- $typInfo :=  index $.Types ($table.GetColumn $column).Type -}}
+				{{- $typInfo :=  $.Types.Index ($table.GetColumn $column).Type -}}
         {{- with $typInfo.CompareExpr -}}
           {{$.Importer.ImportList $typInfo.CompareExprImports -}}
           if {{replace "AAA" (cat "new." $colAlias) . | replace "BBB" (cat "old." $colAlias)}}

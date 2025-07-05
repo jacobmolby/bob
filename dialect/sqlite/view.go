@@ -8,7 +8,6 @@ import (
 	"github.com/stephenafamo/bob"
 	"github.com/stephenafamo/bob/dialect/sqlite/dialect"
 	"github.com/stephenafamo/bob/dialect/sqlite/sm"
-	"github.com/stephenafamo/bob/internal"
 	"github.com/stephenafamo/bob/internal/mappings"
 	"github.com/stephenafamo/bob/orm"
 	"github.com/stephenafamo/scan"
@@ -30,22 +29,21 @@ func NewViewx[T any, Tslice ~[]T](schema, tableName string) *View[T, Tslice] {
 }
 
 func newView[T any, Tslice ~[]T](schema, tableName string) (*View[T, Tslice], mappings.Mapping) {
-	var zero T
-
-	mappings := mappings.GetMappings(reflect.TypeOf(zero))
+	mappings := mappings.GetMappings(reflect.TypeOf(*new(T)))
 	alias := tableName
 	if schema != "" {
 		alias = fmt.Sprintf("%s.%s", schema, tableName)
 	}
 
-	allCols := internal.MappingCols(mappings, alias)
+	allCols := orm.NewColumns(mappings.All...).WithParent(alias)
 
 	return &View[T, Tslice]{
-		schema:  schema,
-		name:    tableName,
-		alias:   alias,
-		allCols: allCols,
-		scanner: scan.StructMapper[T](),
+		schema:        schema,
+		name:          tableName,
+		alias:         alias,
+		allCols:       allCols,
+		returningCols: allCols.WithParent(tableName),
+		scanner:       scan.StructMapper[T](),
 	}, mappings
 }
 
@@ -54,8 +52,9 @@ type View[T any, Tslice ~[]T] struct {
 	name   string
 	alias  string
 
-	allCols orm.Columns
-	scanner scan.Mapper[T]
+	allCols       orm.Columns
+	returningCols orm.Columns
+	scanner       scan.Mapper[T]
 
 	AfterSelectHooks bob.Hooks[Tslice, bob.SkipModelHooksKey]
 	SelectQueryHooks bob.Hooks[*dialect.SelectQuery, bob.SkipQueryHooksKey]
@@ -87,7 +86,7 @@ func (v *View[T, Tslice]) Columns() orm.Columns {
 // Starts a select query
 func (v *View[T, Tslice]) Query(queryMods ...bob.Mod[*dialect.SelectQuery]) *ViewQuery[T, Tslice] {
 	q := &ViewQuery[T, Tslice]{
-		Query: orm.Query[*dialect.SelectQuery, T, Tslice]{
+		Query: orm.Query[*dialect.SelectQuery, T, Tslice, bob.SliceTransformer[T, Tslice]]{
 			ExecQuery: orm.ExecQuery[*dialect.SelectQuery]{
 				BaseQuery: Select(sm.From(v.NameAs())),
 				Hooks:     &v.SelectQueryHooks,
@@ -111,7 +110,7 @@ func (v *View[T, Tslice]) Query(queryMods ...bob.Mod[*dialect.SelectQuery]) *Vie
 }
 
 type ViewQuery[T any, Ts ~[]T] struct {
-	orm.Query[*dialect.SelectQuery, T, Ts]
+	orm.Query[*dialect.SelectQuery, T, Ts, bob.SliceTransformer[T, Ts]]
 }
 
 // Count the number of matching rows

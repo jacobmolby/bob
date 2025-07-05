@@ -25,19 +25,19 @@ type fromable interface {
 }
 
 func From[Q fromable](table any) FromChain[Q] {
-	return FromChain[Q](func() clause.From {
-		return clause.From{
-			Table: table,
+	return FromChain[Q](func() clause.TableRef {
+		return clause.TableRef{
+			Expression: table,
 		}
 	})
 }
 
-type FromChain[Q fromable] func() clause.From
+type FromChain[Q fromable] func() clause.TableRef
 
 func (f FromChain[Q]) Apply(q Q) {
 	from := f()
 
-	q.SetTable(from.Table)
+	q.SetTable(from.Expression)
 	if from.Alias != "" {
 		q.SetTableAlias(from.Alias, from.Columns...)
 	}
@@ -51,7 +51,7 @@ func (f FromChain[Q]) As(alias string, columns ...string) FromChain[Q] {
 	fr.Alias = alias
 	fr.Columns = columns
 
-	return FromChain[Q](func() clause.From {
+	return FromChain[Q](func() clause.TableRef {
 		return fr
 	})
 }
@@ -60,7 +60,7 @@ func (f FromChain[Q]) Lateral() FromChain[Q] {
 	fr := f()
 	fr.Lateral = true
 
-	return FromChain[Q](func() clause.From {
+	return FromChain[Q](func() clause.TableRef {
 		return fr
 	})
 }
@@ -69,7 +69,7 @@ func (f FromChain[Q]) Partition(partitions ...string) FromChain[Q] {
 	fr := f()
 	fr.Partitions = append(fr.Partitions, partitions...)
 
-	return FromChain[Q](func() clause.From {
+	return FromChain[Q](func() clause.TableRef {
 		return fr
 	})
 }
@@ -82,7 +82,7 @@ func (f FromChain[Q]) index(Type, For, first string, others ...string) FromChain
 		For:     For,
 	})
 
-	return FromChain[Q](func() clause.From {
+	return FromChain[Q](func() clause.TableRef {
 		return fr
 	})
 }
@@ -170,7 +170,7 @@ func Join[Q Joinable](typ string, e any) JoinChain[Q] {
 	return JoinChain[Q](func() clause.Join {
 		return clause.Join{
 			Type: typ,
-			To:   clause.From{Table: e},
+			To:   clause.TableRef{Expression: e},
 		}
 	})
 }
@@ -257,6 +257,12 @@ func (j JoinChain[Q]) Using(using ...string) bob.Mod[Q] {
 	return mods.Join[Q](jo)
 }
 
+type OrderCombined OrderBy[*SelectQuery]
+
+func (o OrderCombined) Apply(q *SelectQuery) {
+	q.CombinedOrder.AppendOrder(o())
+}
+
 type OrderBy[Q interface{ AppendOrder(bob.Expression) }] func() clause.OrderDef
 
 func (s OrderBy[Q]) Apply(q Q) {
@@ -304,16 +310,16 @@ func (c CTEChain[Q]) As(q bob.Query) CTEChain[Q] {
 	})
 }
 
-type LockChain[Q interface{ SetFor(clause.For) }] func() clause.For
+type LockChain[Q interface{ AppendLock(bob.Expression) }] func() clause.Lock
 
 func (l LockChain[Q]) Apply(q Q) {
-	q.SetFor(l())
+	q.AppendLock(l())
 }
 
 func (l LockChain[Q]) NoWait() LockChain[Q] {
 	lock := l()
 	lock.Wait = clause.LockWaitNoWait
-	return LockChain[Q](func() clause.For {
+	return LockChain[Q](func() clause.Lock {
 		return lock
 	})
 }
@@ -321,7 +327,7 @@ func (l LockChain[Q]) NoWait() LockChain[Q] {
 func (l LockChain[Q]) SkipLocked() LockChain[Q] {
 	lock := l()
 	lock.Wait = clause.LockWaitSkipLocked
-	return LockChain[Q](func() clause.For {
+	return LockChain[Q](func() clause.Lock {
 		return lock
 	})
 }

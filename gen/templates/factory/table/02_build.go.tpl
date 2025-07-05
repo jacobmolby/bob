@@ -1,4 +1,4 @@
-{{$.Importer.Import "models" $.ModelsPackage}}
+{{$.Importer.Import "models" (index $.OutputPackages "models") }}
 {{ $table := .Table}}
 {{ $tAlias := .Aliases.Table $table.Key -}}
 
@@ -16,7 +16,7 @@ func (t {{$tAlias.UpSingular}}Template) setModelRels(o *models.{{$tAlias.UpSingu
 
         if t.r.{{$relAlias}} != nil {
             {{- if not .IsToMany}}
-                rel := t.r.{{$relAlias}}.o.toModel()
+                rel := t.r.{{$relAlias}}.o.Build()
                 {{- if and (not $.NoBackReferencing) $invRel.Name}}
                     {{- if not $invRel.IsToMany}}
                         rel.R.{{$invAlias}} = o
@@ -24,12 +24,12 @@ func (t {{$tAlias.UpSingular}}Template) setModelRels(o *models.{{$tAlias.UpSingu
                         rel.R.{{$invAlias}} = append(rel.R.{{$invAlias}}, o)
                     {{- end}}
                 {{- end}}
-                {{$.Tables.SetFactoryDeps $.Importer $.Aliases . false}}
+                {{$.Tables.SetFactoryDeps $.CurrentPackage $.Importer $.Types $.Aliases . false}}
             {{- else -}}
                 rel := models.{{$ftable.UpSingular}}Slice{}
                 for _, r := range t.r.{{$relAlias}} {
-                  related := r.o.toModels(r.number)
-                  {{- $setter := $.Tables.SetFactoryDeps $.Importer $.Aliases . false}}
+                  related := r.o.BuildMany(r.number)
+                  {{- $setter := $.Tables.SetFactoryDeps $.CurrentPackage $.Importer $.Types $.Aliases . false}}
                   {{- if or $setter (and (not $.NoBackReferencing) $invRel.Name) }}
                   for _, rel := range related {
                     {{$setter}}
@@ -60,14 +60,10 @@ func (o {{$tAlias.UpSingular}}Template) BuildSetter() *models.{{$tAlias.UpSingul
 	{{range $column := $table.Columns -}}
 	{{- if $column.Generated}}{{continue}}{{end -}}
 	{{$colAlias := $tAlias.Column $column.Name -}}
+  {{$colGetter := $.Types.ToOptional $.CurrentPackage $.Importer $column.Type "val" $column.Nullable $column.Nullable -}}
 		if o.{{$colAlias}} != nil {
-			{{if $column.Nullable -}}
-			{{- $.Importer.Import "github.com/aarondl/opt/omitnull" -}}
-			m.{{$colAlias}} = omitnull.FromNull(o.{{$colAlias}}())
-			{{else -}}
-			{{- $.Importer.Import "github.com/aarondl/opt/omit" -}}
-			m.{{$colAlias}} = omit.From(o.{{$colAlias}}())
-			{{end -}}
+      val := o.{{$colAlias}}()
+      m.{{$colAlias}} = {{$colGetter}}
 		}
 	{{end}}
 
@@ -91,7 +87,15 @@ func (o {{$tAlias.UpSingular}}Template) BuildManySetter(number int) []*models.{{
 // Related objects are also created and placed in the .R field
 // NOTE: Objects are not inserted into the database. Use {{$tAlias.UpSingular}}Template.Create
 func (o {{$tAlias.UpSingular}}Template) Build() *models.{{$tAlias.UpSingular}} {
-	m := o.toModel()
+  m := &models.{{$tAlias.UpSingular}}{}
+
+  {{range $column := $table.Columns -}}
+  {{$colAlias := $tAlias.Column $column.Name -}}
+      if o.{{$colAlias}} != nil {
+          m.{{$colAlias}} = o.{{$colAlias}}()
+      }
+  {{end}}
+
 	o.setModelRels(m)
 
 	return m

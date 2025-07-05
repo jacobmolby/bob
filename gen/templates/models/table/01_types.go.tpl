@@ -5,14 +5,8 @@
 type {{$tAlias.UpSingular}} struct {
 	{{- range $column := $table.Columns -}}
 	{{- $colAlias := $tAlias.Column $column.Name -}}
-  {{- $typDef :=  index $.Types $column.Type -}}
-	{{- $colTyp := or $typDef.AliasOf $column.Type -}}
-	{{- $.Importer.ImportList $typDef.Imports -}}
 	{{- $orig_col_name := $column.Name -}}
-	{{- if $column.Nullable -}}
-		{{- $colTyp = printf "null.Val[%s]" $colTyp -}}
-		{{ $.Importer.Import "github.com/aarondl/opt/null"}}
-	{{- end -}}
+  {{- $colTyp := $.Types.GetNullable $.CurrentPackage $.Importer $column.Type $column.Nullable -}}
 	{{- if trim $column.Comment}}{{range $column.Comment | splitList "\n"}}
 		// {{ . }}
 	{{- end}}{{end -}}
@@ -104,7 +98,7 @@ func build{{$tAlias.UpSingular}}Columns(alias string) {{$tAlias.DownSingular}}Co
 type {{$tAlias.DownSingular}}Where[Q {{$.Dialect}}.Filterable] struct {
 	{{range $column := $table.Columns -}}
     {{- $colAlias := $tAlias.Column $column.Name -}}
-    {{- $colTyp := or (index $.Types $column.Type).AliasOf $column.Type -}}
+    {{- $colTyp := $.Types.Get $.CurrentPackage $.Importer $column.Type -}}
 		{{- if $column.Nullable -}}
 			{{$colAlias}} {{$.Dialect}}.WhereNullMod[Q, {{$colTyp}}]
 		{{- else -}}
@@ -120,8 +114,8 @@ func ({{$tAlias.DownSingular}}Where[Q]) AliasedAs(alias string) {{$tAlias.DownSi
 func build{{$tAlias.UpSingular}}Where[Q {{$.Dialect}}.Filterable](cols {{$tAlias.DownSingular}}Columns) {{$tAlias.DownSingular}}Where[Q] {
 	return {{$tAlias.DownSingular}}Where[Q]{
 			{{range $column := $table.Columns -}}
-      {{- $colTyp := or (index $.Types $column.Type).AliasOf $column.Type -}}
-			{{- $colAlias := $tAlias.Column $column.Name -}}
+      {{- $colAlias := $tAlias.Column $column.Name -}}
+      {{- $colTyp := $.Types.Get $.CurrentPackage $.Importer $column.Type -}}
 				{{- if $column.Nullable -}}
 					{{$colAlias}}: {{$.Dialect}}.WhereNull[Q, {{$colTyp}}](cols.{{$colAlias}}),
 				{{- else -}}
@@ -139,20 +133,34 @@ func build{{$tAlias.UpSingular}}Where[Q {{$.Dialect}}.Filterable](cols {{$tAlias
 {{ end }} 
 {{end -}}
 
-{{ if $hasUniqueIndex }}
+{{ if or $hasUniqueIndex $table.Constraints.Primary }}
 var {{$tAlias.UpSingular}}Errors = &{{$tAlias.DownSingular}}Errors{
-	{{range $index := $table.Indexes}}
-	{{ if $index.Unique }}
-	ErrUnique{{$index.Name | camelcase}}: &UniqueConstraintError{s: "{{$index.Name}}"},
-	{{ end }}
+  {{if $table.Constraints.Primary}}
+  {{$pk := $table.Constraints.Primary}}
+	ErrUnique{{$pk.Name | camelcase}}: &UniqueConstraintError{
+    schema: {{printf "%q" $table.Schema}},
+    table: {{printf "%q" $table.Name}},
+    columns: {{printf "%#v" $pk.Columns}},
+    s: {{printf "%q" $pk.Name}},
+  },
+  {{end}}
+	{{range $index := $table.Constraints.Uniques}}
+	ErrUnique{{$index.Name | camelcase}}: &UniqueConstraintError{
+    schema: {{printf "%q" $table.Schema}},
+    table: {{printf "%q" $table.Name}},
+    columns: {{printf "%#v" $index.Columns}},
+    s: "{{$index.Name}}",
+  },
 	{{end}}
 }
 
 type {{$tAlias.DownSingular}}Errors struct {
-	{{range $index := $table.Indexes}}
-	{{ if $index.Unique }} 
+  {{if $table.Constraints.Primary}}
+  {{$pk := $table.Constraints.Primary}}
+	ErrUnique{{$pk.Name | camelcase}} *UniqueConstraintError
+  {{end}}
+	{{range $index := $table.Constraints.Uniques}}
 	ErrUnique{{$index.Name | camelcase}} *UniqueConstraintError
-	{{ end }}
 	{{end}}
 }
 {{ end }}

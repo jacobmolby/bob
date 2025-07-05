@@ -22,24 +22,23 @@ package pgtypes
 import (
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"strings"
-
-	"github.com/aarondl/opt/null"
 )
 
 // HStore is a wrapper for transferring HStore values back and forth easily.
-type HStore map[string]null.Val[string]
+type HStore map[string]sql.Null[string]
 
 // escapes and quotes hstore keys/values
 // s should be a sql.NullString or string
 func hQuote(s any) string {
 	var str string
 	switch v := s.(type) {
-	case null.Val[string]:
-		if v.IsNull() {
+	case sql.Null[string]:
+		if !v.Valid {
 			return "NULL"
 		}
-		str = v.MustGet()
+		str = v.V
 	case sql.NullString:
 		if !v.Valid {
 			return "NULL"
@@ -48,7 +47,7 @@ func hQuote(s any) string {
 	case string:
 		str = v
 	default:
-		panic("not a string or sql.NullString")
+		panic("not a string, sql.NullString or sql.Null[string]")
 	}
 
 	str = strings.ReplaceAll(str, "\\", "\\\\")
@@ -64,7 +63,7 @@ func (h *HStore) Scan(value any) error {
 		h = nil //nolint:ineffassign
 		return nil
 	}
-	*h = make(map[string]null.Val[string])
+	*h = make(map[string]sql.Null[string])
 	var b byte
 	pair := [][]byte{{}, {}}
 	pi := 0
@@ -72,7 +71,16 @@ func (h *HStore) Scan(value any) error {
 	didQuote := false
 	sawSlash := false
 	bindex := 0
-	for bindex, b = range value.([]byte) {
+	var val []byte
+	switch value := value.(type) {
+	case string:
+		val = []byte(value)
+	case []byte:
+		val = value
+	default:
+		return fmt.Errorf("cannot scan %T into HStore", value)
+	}
+	for bindex, b = range val {
 		if sawSlash {
 			pair[pi] = append(pair[pi], b)
 			sawSlash = false
@@ -103,9 +111,9 @@ func (h *HStore) Scan(value any) error {
 				case ',':
 					s := string(pair[1])
 					if !didQuote && len(s) == 4 && strings.EqualFold(s, "null") {
-						(*h)[string(pair[0])] = null.Val[string]{}
+						(*h)[string(pair[0])] = sql.Null[string]{}
 					} else {
-						(*h)[string(pair[0])] = null.From(string(pair[1]))
+						(*h)[string(pair[0])] = sql.Null[string]{V: string(pair[1]), Valid: true}
 					}
 					pair[0] = []byte{}
 					pair[1] = []byte{}
@@ -119,12 +127,26 @@ func (h *HStore) Scan(value any) error {
 	if bindex > 0 {
 		s := string(pair[1])
 		if !didQuote && len(s) == 4 && strings.EqualFold(s, "null") {
-			(*h)[string(pair[0])] = null.Val[string]{}
+			(*h)[string(pair[0])] = sql.Null[string]{}
 		} else {
-			(*h)[string(pair[0])] = null.From(string(pair[1]))
+			(*h)[string(pair[0])] = sql.Null[string]{V: string(pair[1]), Valid: true}
 		}
 	}
 	return nil
+}
+
+func (h HStore) String() string {
+	if h == nil {
+		return ""
+	}
+
+	parts := []string{}
+	for key, val := range h {
+		thispart := hQuote(key) + "=>" + hQuote(val)
+		parts = append(parts, thispart)
+	}
+
+	return strings.Join(parts, ",")
 }
 
 // Value implements the driver Valuer interface. Note if h is nil, the
@@ -133,10 +155,5 @@ func (h HStore) Value() (driver.Value, error) {
 	if h == nil {
 		return nil, nil //nolint:nilnil
 	}
-	parts := []string{}
-	for key, val := range h {
-		thispart := hQuote(key) + "=>" + hQuote(val)
-		parts = append(parts, thispart)
-	}
-	return []byte(strings.Join(parts, ",")), nil
+	return h.String(), nil
 }

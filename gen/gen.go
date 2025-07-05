@@ -5,9 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -15,9 +12,9 @@ import (
 	"text/template"
 
 	"github.com/stephenafamo/bob/gen/drivers"
+	"github.com/stephenafamo/bob/gen/language"
 	"github.com/stephenafamo/bob/orm"
 	"github.com/volatiletech/strmangle"
-	"golang.org/x/mod/modfile"
 )
 
 var (
@@ -51,10 +48,6 @@ func Run[T, C, I any](ctx context.Context, s *State[C], driver drivers.Interface
 		}
 	}
 
-	if len(s.Config.Generator) > 0 {
-		noEditDisclaimer = fmt.Appendf(nil, noEditDisclaimerFmt, " by "+s.Config.Generator)
-	}
-
 	dbInfo, err := driver.Assemble(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to fetch table data: %w", err)
@@ -74,18 +67,24 @@ func Run[T, C, I any](ctx context.Context, s *State[C], driver drivers.Interface
 		return errors.New("no tables found in database")
 	}
 
-	modPkg, version, err := modelsPackage(s.Outputs)
+	pkgMap, err := buildPkgMap(s.Outputs)
 	if err != nil {
 		return fmt.Errorf("getting models pkg details: %w", err)
 	}
 
 	// Merge in the user-configured types
 	types := driver.Types()
-	if types == nil {
-		types = make(drivers.Types)
-	}
-	for name, def := range s.Config.Types {
-		types[name] = def
+	types.RegisterAll(s.Config.Types)
+
+	switch s.Config.TypeSystem {
+	case "", "github.com/aarondl/opt":
+		types.SetTypeModifier(drivers.AarondlNull{})
+	case "github.com/aarondl/opt/null":
+		types.SetTypeModifier(drivers.AarondlNullPointers{})
+	case "database/sql":
+		types.SetTypeModifier(drivers.DatabaseSqlNull{})
+	default:
+		panic(fmt.Sprintf("unknown type system %q", s.Config.TypeSystem))
 	}
 
 	initInflections(s.Config.Inflections)
@@ -131,8 +130,8 @@ func Run[T, C, I any](ctx context.Context, s *State[C], driver drivers.Interface
 		TagIgnore:         make(map[string]struct{}),
 		Tags:              s.Config.Tags,
 		RelationTag:       s.Config.RelationTag,
-		ModelsPackage:     modPkg,
-		DriverName:        dbInfo.DriverName,
+		OutputPackages:    pkgMap,
+		Driver:            dbInfo.Driver,
 	}
 
 	for _, v := range s.Config.TagIgnore {
@@ -152,10 +151,10 @@ func Run[T, C, I any](ctx context.Context, s *State[C], driver drivers.Interface
 		}
 	}
 
-	return generate(s, data, version)
+	return generate(s, data)
 }
 
-func generate[T, C, I any](s *State[C], data *TemplateData[T, C, I], goVersion string) error {
+func generate[T, C, I any](s *State[C], data *TemplateData[T, C, I]) error {
 	knownKeys := make(map[string]struct{})
 	templateByteBuffer := &bytes.Buffer{}
 	templateHeaderByteBuffer := &bytes.Buffer{}
@@ -198,7 +197,7 @@ func generate[T, C, I any](s *State[C], data *TemplateData[T, C, I], goVersion s
 			// set the package name for this output
 			data.PkgName = o.PkgName
 
-			if err := o.initOutFolders(s.Config.Wipe); err != nil {
+			if err := o.initOutFolders(); err != nil {
 				return fmt.Errorf("unable to initialize the output folders: %w", err)
 			}
 
@@ -206,39 +205,43 @@ func generate[T, C, I any](s *State[C], data *TemplateData[T, C, I], goVersion s
 			o.templateByteBuffer = templateByteBuffer
 			o.templateHeaderByteBuffer = templateHeaderByteBuffer
 
-			if err := generateSingletonOutput(o, data, goVersion, s.Config.NoTests); err != nil {
+			langs := language.Languages{
+				GeneratorName:           s.Config.Generator,
+				SeparatePackageForTests: o.SeparatePackageForTests,
+			}
+
+			if err := generateSingletonOutput(o, data, langs, s.Config.NoTests); err != nil {
 				return fmt.Errorf("singleton template output: %w", err)
 			}
 
-			dirExtMap := groupTemplates(o.tableTemplates)
+			switch o.Key {
+			case "queries":
+				dirExtMap := groupTemplatesByExtension(o.queryTemplates)
+				for _, file := range data.QueryFolder.Files {
+					data.QueryFile = file
 
-			for _, table := range data.Tables {
-				data.Table = table
+					// We do this so that the name of the file is correct
+					data.Table = drivers.Table[C, I]{
+						Name: file.BaseName(),
+					}
 
-				// Generate the regular templates
-				if err := generateOutput(o, dirExtMap, o.tableTemplates, data, goVersion, s.Config.NoTests); err != nil {
-					return fmt.Errorf("unable to generate output: %w", err)
+					if err := generateOutput(o, dirExtMap, o.queryTemplates, data, langs, s.Config.NoTests); err != nil {
+						return fmt.Errorf("unable to generate output: %w", err)
+					}
+				}
+
+			default:
+				dirExtMap := groupTemplatesByExtension(o.tableTemplates)
+				for _, table := range data.Tables {
+					data.Table = table
+
+					// Generate the regular templates
+					if err := generateOutput(o, dirExtMap, o.tableTemplates, data, langs, s.Config.NoTests); err != nil {
+						return fmt.Errorf("unable to generate output: %w", err)
+					}
 				}
 			}
 
-			if len(data.QueryFolder.Files) == 0 {
-				continue
-			}
-
-			dirExtMap = groupTemplates(o.queryTemplates)
-			for _, file := range data.QueryFolder.Files {
-				data.QueryFile = file
-
-				// We do this so that the name of the file is correct
-				base := filepath.Base(file.Path)
-				data.Table = drivers.Table[C, I]{
-					Name: base[:len(base)-4],
-				}
-
-				if err := generateOutput(o, dirExtMap, o.queryTemplates, data, goVersion, s.Config.NoTests); err != nil {
-					return fmt.Errorf("unable to generate output: %w", err)
-				}
-			}
 		}
 	}
 
@@ -281,99 +284,20 @@ func (s *State[C]) initTags() error {
 	return nil
 }
 
-// Returns the pkg name, and the go version
-func modelsPackage(outputs []*Output) (string, string, error) {
-	var modelsFolder string
+func buildPkgMap(outputs []*Output) (map[string]string, error) {
+	pkgMap := make(map[string]string)
+
 	for _, o := range outputs {
-		if o.Key == "models" {
-			modelsFolder = o.OutFolder
+		if o.Key == "queries" {
+			continue // queries have no fixed output folder
 		}
-	}
 
-	if modelsFolder == "" {
-		return "", "", nil
-	}
-
-	modRoot, modFile, err := goModInfo(modelsFolder)
-	if err != nil {
-		return "", "", fmt.Errorf("getting mod details: %w", err)
-	}
-
-	fullPath := modelsFolder
-	if !filepath.IsAbs(modelsFolder) {
-		wd, err := os.Getwd()
+		pkg, _, err := language.PackageForFolder(o.OutFolder)
 		if err != nil {
-			return "", "", fmt.Errorf("could not get working directory: %w", err)
+			return nil, fmt.Errorf("getting package for folder %q: %w", o.OutFolder, err)
 		}
-
-		fullPath = filepath.Join(wd, modelsFolder)
+		pkgMap[o.Key] = pkg
 	}
 
-	relPath := strings.TrimPrefix(fullPath, modRoot)
-
-	return path.Join(modFile.Module.Mod.Path, filepath.ToSlash(relPath)), getGoVersion(modFile), nil
-}
-
-// goModInfo returns the main module's root directory
-// and the parsed contents of the go.mod file.
-func goModInfo(path string) (string, *modfile.File, error) {
-	goModPath, err := findGoMod(path)
-	if err != nil {
-		return "", nil, fmt.Errorf("cannot find main module: %w", err)
-	}
-
-	if goModPath == os.DevNull {
-		return "", nil, fmt.Errorf("destination is not in a go module")
-	}
-
-	data, err := os.ReadFile(goModPath)
-	if err != nil {
-		return "", nil, fmt.Errorf("cannot read main go.mod file: %w", err)
-	}
-
-	modf, err := modfile.Parse(goModPath, data, nil)
-	if err != nil {
-		return "", nil, fmt.Errorf("could not parse go.mod: %w", err)
-	}
-
-	return filepath.Dir(goModPath), modf, nil
-}
-
-func findGoMod(path string) (string, error) {
-	var outData, errData bytes.Buffer
-
-	err := os.MkdirAll(path, 0o755)
-	if err != nil {
-		return "", fmt.Errorf("could not create destination folder %q: %w", path, err)
-	}
-
-	c := exec.Command("go", "env", "GOMOD")
-	c.Stdout = &outData
-	c.Stderr = &errData
-	c.Dir = path
-	err = c.Run()
-	if err != nil {
-		var exitError *exec.ExitError
-		if errors.As(err, &exitError) && errData.Len() > 0 {
-			return "", errors.New(strings.TrimSpace(errData.String()))
-		}
-
-		return "", fmt.Errorf("cannot run go env GOMOD: %w", err)
-	}
-
-	out := strings.TrimSpace(outData.String())
-	if out == "" {
-		return "", errors.New("no go.mod file found in any parent directory")
-	}
-
-	return out, nil
-}
-
-// getGoVersion returns the required go version from the package
-func getGoVersion(modFile *modfile.File) string {
-	if modFile.Toolchain != nil {
-		return modFile.Toolchain.Name
-	}
-
-	return strings.Join(modFile.Go.Syntax.Token, "")
+	return pkgMap, nil
 }

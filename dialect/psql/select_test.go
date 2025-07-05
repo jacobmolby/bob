@@ -10,7 +10,7 @@ import (
 	"github.com/stephenafamo/bob/dialect/psql/sm"
 	"github.com/stephenafamo/bob/dialect/psql/wm"
 	testutils "github.com/stephenafamo/bob/test/utils"
-	pg_query "github.com/wasilibs/go-pgquery"
+	pgparse "github.com/wasilibs/go-pgquery"
 )
 
 var (
@@ -258,10 +258,10 @@ WINDOW w AS (PARTITION BY depname ORDER BY salary)`,
 }
 
 func formatter(s string) (string, error) {
-	aTree, err := pg_query.Parse(s)
+	aTree, err := pgparse.Parse(s)
 	if err != nil {
 		return "", err
 	}
 
-	return pg_query.Deparse(aTree)
+	return pgparse.Deparse(aTree)
 }

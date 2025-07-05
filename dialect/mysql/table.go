@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/stephenafamo/bob"
@@ -20,35 +23,21 @@ import (
 	"github.com/stephenafamo/scan"
 )
 
-type setter[T any] interface {
-	orm.Setter[T, *dialect.InsertQuery, *dialect.UpdateQuery]
-}
+type setter[T any] = orm.Setter[T, *dialect.InsertQuery, *dialect.UpdateQuery]
 
-func NewTable[T orm.Model, Tset setter[T]](tableName string, uniques ...[]string) *Table[T, []T, Tset] {
+func NewTable[T any, Tset setter[T]](tableName string, uniques ...[]string) *Table[T, []T, Tset] {
 	return NewTablex[T, []T, Tset](tableName, uniques...)
 }
 
-func NewTablex[T orm.Model, Tslice ~[]T, Tset setter[T]](tableName string, uniques ...[]string) *Table[T, Tslice, Tset] {
-	var zeroSet Tset
-
-	setMapping := mappings.GetMappings(reflect.TypeOf(zeroSet))
-
+func NewTablex[T any, Tslice ~[]T, Tset setter[T]](tableName string, uniques ...[]string) *Table[T, Tslice, Tset] {
+	setMapping := mappings.GetMappings(reflect.TypeOf(*new(Tset)))
 	view, mappings := newView[T, Tslice](tableName)
 	t := &Table[T, Tslice, Tset]{
 		View:             view,
+		pkCols:           orm.NewColumns(mappings.PKs...).WithParent(view.alias),
 		setterMapping:    setMapping,
 		nonGeneratedCols: internal.FilterNonZero(mappings.NonGenerated),
-	}
-
-	pkCols := internal.FilterNonZero(mappings.PKs)
-	if len(pkCols) == 1 {
-		t.pkExpr = Quote(pkCols[0])
-	} else {
-		expr := make([]bob.Expression, len(pkCols))
-		for i, col := range pkCols {
-			expr[i] = Quote(col)
-		}
-		t.pkExpr = Group(expr...)
+		uniqueIdx:        uniqueIndexes(setMapping.All, uniques...),
 	}
 
 	allAutoIncr := internal.FilterNonZero(mappings.AutoIncrement)
@@ -56,21 +45,14 @@ func NewTablex[T orm.Model, Tslice ~[]T, Tset setter[T]](tableName string, uniqu
 		t.autoIncrementColumn = allAutoIncr[0]
 	}
 
-	// Do this only if needed
-	if t.autoIncrementColumn == "" {
-		t.uniqueIdx = uniqueIndexes(setMapping.All, uniques...)
-	}
-
-	t.unretrievable = t.autoIncrementColumn == "" && len(t.uniqueIdx) == 0
-
 	return t
 }
 
 // The table contains extract information from the struct and contains
 // caches ???
-type Table[T orm.Model, Tslice ~[]T, Tset setter[T]] struct {
+type Table[T any, Tslice ~[]T, Tset setter[T]] struct {
 	*View[T, Tslice]
-	pkExpr           dialect.Expression
+	pkCols           orm.Columns
 	setterMapping    mappings.Mapping
 	nonGeneratedCols []string
 
@@ -93,22 +75,21 @@ type Table[T orm.Model, Tslice ~[]T, Tset setter[T]] struct {
 
 	// field indexes of unique columns
 	uniqueIdx [][]int
+}
 
-	// save if we can retrieve or not
-	unretrievable bool
+// Returns the primary key columns for this table.
+func (t *Table[T, Tslice, Tset]) PrimaryKey() orm.Columns {
+	return t.pkCols
 }
 
 // Starts an insert query for this table
-func (t *Table[T, Tslice, Tset]) Insert(queryMods ...bob.Mod[*dialect.InsertQuery]) *insertQuery[T, Tslice] {
-	q := &insertQuery[T, Tslice]{
+func (t *Table[T, Tslice, Tset]) Insert(queryMods ...bob.Mod[*dialect.InsertQuery]) *insertQuery[T, Tslice, Tset] {
+	q := &insertQuery[T, Tslice, Tset]{
 		ExecQuery: orm.ExecQuery[*dialect.InsertQuery]{
 			BaseQuery: Insert(im.Into(t.Name(), t.nonGeneratedCols...)),
 			Hooks:     &t.InsertQueryHooks,
 		},
-		scanner:       t.scanner,
-		getInserted:   t.getInserted,
-		unretrievable: t.unretrievable,
-		hooks:         &t.AfterInsertHooks,
+		table: t,
 	}
 
 	q.Apply(queryMods...)
@@ -139,12 +120,9 @@ func (t *Table[T, Tslice, Tset]) Delete(queryMods ...bob.Mod[*dialect.DeleteQuer
 	return q
 }
 
-type insertQuery[T orm.Model, Ts ~[]T] struct {
+type insertQuery[T any, Ts ~[]T, Tset setter[T]] struct {
 	orm.ExecQuery[*dialect.InsertQuery]
-	scanner       scan.Mapper[T]
-	unretrievable bool
-	getInserted   func([]clause.Value, []sql.Result) (bob.Query, error)
-	hooks         *bob.Hooks[Ts, bob.SkipModelHooksKey]
+	table *Table[T, Ts, Tset]
 }
 
 // Insert One Row
@@ -152,13 +130,13 @@ type insertQuery[T orm.Model, Ts ~[]T] struct {
 // to retrieve the row.
 // if there is no AUTO_INCREMENT column and the row was not inserted with unique values, it will return [orm.ErrCannotRetrieveRow]
 // [orm.ErrCannotRetrieveRow] is also returned if its a query of the form INSERT INTO ... SELECT ...
-func (t *insertQuery[T, Ts]) One(ctx context.Context, exec bob.Executor) (T, error) {
+func (t *insertQuery[T, Ts, Tset]) One(ctx context.Context, exec bob.Executor) (T, error) {
 	q, err := t.insertAll(ctx, exec)
 	if err != nil {
 		return *new(T), err
 	}
 
-	return bob.One(ctx, exec, q, t.scanner)
+	return bob.One(ctx, exec, q, t.table.scanner)
 }
 
 // Insert Many
@@ -166,13 +144,13 @@ func (t *insertQuery[T, Ts]) One(ctx context.Context, exec bob.Executor) (T, err
 // and then attempt to retrieve all the rows using a SELECT query.
 // if there is no AUTO_INCREMENT column and the row was not inserted with unique values, it will return [orm.ErrCannotRetrieveRow]
 // [orm.ErrCannotRetrieveRow] is also returned if its a query of the form INSERT INTO ... SELECT ...
-func (t *insertQuery[T, Ts]) All(ctx context.Context, exec bob.Executor) (Ts, error) {
+func (t *insertQuery[T, Ts, Tset]) All(ctx context.Context, exec bob.Executor) (Ts, error) {
 	q, err := t.insertAll(ctx, exec)
 	if err != nil {
 		return nil, err
 	}
 
-	return bob.Allx[T, Ts](ctx, exec, q, t.scanner)
+	return bob.Allx[bob.SliceTransformer[T, Ts]](ctx, exec, q, t.table.scanner)
 }
 
 // Insert Many and return a cursor
@@ -180,33 +158,39 @@ func (t *insertQuery[T, Ts]) All(ctx context.Context, exec bob.Executor) (Ts, er
 // and then attempt to retrieve all the rows using a SELECT query.
 // if there is no AUTO_INCREMENT column and the row was not inserted with unique values, it will return [orm.ErrCannotRetrieveRow]
 // [orm.ErrCannotRetrieveRow] is also returned if its a query of the form INSERT INTO ... SELECT ...
-func (t *insertQuery[T, Ts]) Cursor(ctx context.Context, exec bob.Executor) (scan.ICursor[T], error) {
+func (t *insertQuery[T, Ts, Tset]) Cursor(ctx context.Context, exec bob.Executor) (scan.ICursor[T], error) {
 	q, err := t.insertAll(ctx, exec)
 	if err != nil {
 		return nil, err
 	}
 
-	return bob.Cursor(ctx, exec, q, t.scanner)
+	return bob.Cursor(ctx, exec, q, t.table.scanner)
+}
+
+func (t *insertQuery[T, Tslice, Tset]) retrievable() error {
+	if t.Expression.Values.Query != nil {
+		return fmt.Errorf("inserting from query: %w", orm.ErrCannotRetrieveRow)
+	}
+
+	if len(t.Expression.DuplicateKeyUpdate.Set) > 0 {
+		return fmt.Errorf("has duplicate key update: %w", orm.ErrCannotRetrieveRow)
+	}
+
+	if t.table.autoIncrementColumn != "" {
+		return nil
+	}
+
+	if len(t.table.uniqueIdx) > 0 {
+		return nil
+	}
+
+	return fmt.Errorf("no auto increment column or unique index: %w", orm.ErrCannotRetrieveRow)
 }
 
 // inserts all and returns the select query
-func (t *insertQuery[T, Ts]) insertAll(ctx context.Context, exec bob.Executor) (bob.Query, error) {
-	// If unretrievable, we can't retrieve the rows
-	// simply execute the query and return
-	if t.unretrievable {
-		if _, err := t.Exec(ctx, exec); err != nil {
-			return nil, err
-		}
-
-		return nil, orm.ErrCannotRetrieveRow
-	}
-
-	if t.Expression.Values.Query != nil {
-		return nil, orm.ErrCannotRetrieveRow
-	}
-
-	if len(t.Expression.Values.Vals) == 0 {
-		return nil, orm.ErrCannotRetrieveRow
+func (t *insertQuery[T, Ts, Tset]) insertAll(ctx context.Context, exec bob.Executor) (bob.Query, error) {
+	if retrievalErr := t.retrievable(); retrievalErr != nil {
+		return nil, retrievalErr
 	}
 
 	var err error
@@ -242,23 +226,23 @@ func (t *insertQuery[T, Ts]) insertAll(ctx context.Context, exec bob.Executor) (
 	return t.getInserted(oldVals, results)
 }
 
-func (t *Table[T, Tslice, Tset]) getInserted(vals []clause.Value, results []sql.Result) (bob.Query, error) {
+func (t *insertQuery[T, Tslice, Tset]) getInserted(vals []clause.Value, results []sql.Result) (bob.Query, error) {
 	w := &bytes.Buffer{}
 
-	if t.unretrievable {
-		return nil, orm.ErrCannotRetrieveRow
+	if retrievalErr := t.retrievable(); retrievalErr != nil {
+		return nil, retrievalErr
 	}
 
-	query := Select(sm.From(t.NameAs()))
+	query := Select(sm.From(t.table.NameAs()))
 
 	// Change query type to Insert so that the correct hooks are run
 	query.QueryType = bob.QueryTypeInsert
 
 	var autoIncrArgs []bob.Expression
-	idArgs := make([][]bob.Expression, len(t.uniqueIdx))
+	idArgs := make([][]bob.Expression, len(t.table.uniqueIdx))
 
 	for i, val := range vals {
-		if t.autoIncrementColumn != "" {
+		if t.table.autoIncrementColumn != "" && len(t.Expression.DuplicateKeyUpdate.Set) == 0 {
 			lastID, err := results[i].LastInsertId()
 			if err != nil {
 				return nil, err
@@ -268,16 +252,16 @@ func (t *Table[T, Tslice, Tset]) getInserted(vals []clause.Value, results []sql.
 		} else {
 			uIdx, uArgs := t.uniqueSet(w, val)
 			if uIdx == -1 || len(uArgs) == 0 {
-				return nil, orm.ErrCannotRetrieveRow
+				return nil, fmt.Errorf("no unique index found: %w", orm.ErrCannotRetrieveRow)
 			}
 
-			idArgs[uIdx] = append(idArgs[uIdx], ArgGroup(internal.ToAnySlice(uArgs)...))
+			idArgs[uIdx] = append(idArgs[uIdx], Group(uArgs...))
 		}
 	}
 
-	filters := make([]bob.Expression, 0, len(t.uniqueIdx))
+	filters := make([]bob.Expression, 0, len(t.table.uniqueIdx))
 	if len(autoIncrArgs) > 0 {
-		filters = append(filters, Quote(t.autoIncrementColumn).In(autoIncrArgs...))
+		filters = append(filters, Quote(t.table.autoIncrementColumn).In(autoIncrArgs...))
 	}
 
 	for i, args := range idArgs {
@@ -285,13 +269,13 @@ func (t *Table[T, Tslice, Tset]) getInserted(vals []clause.Value, results []sql.
 			continue
 		}
 
-		uCols := t.uniqueIdx[i]
+		uCols := t.table.uniqueIdx[i]
 		if len(uCols) == 1 {
-			filters = append(filters, Quote(t.setterMapping.All[uCols[0]]).In(args...))
+			filters = append(filters, Quote(t.table.setterMapping.All[uCols[0]]).In(args...))
 			continue
 		}
 
-		filters = append(filters, Group(t.uniqueColNames(i)...).In(args...))
+		filters = append(filters, Group(t.table.uniqueColNames(i)...).In(args...))
 	}
 
 	query.Apply(sm.Where(Or(filters...)))
@@ -323,12 +307,24 @@ func uniqueIndexes(allCols []string, uniques ...[]string) [][]int {
 func isDefaultOrNull(w *bytes.Buffer, e bob.Expression) bool {
 	w.Reset()
 
+	if e == nil {
+		return true
+	}
+
 	args, err := e.WriteSQL(context.Background(), w, dialect.Dialect, 1)
 	if err != nil {
 		return false
 	}
 
 	if len(args) > 0 {
+		if args[0] == nil {
+			return true
+		}
+		if driverValue, ok := args[0].(driver.Valuer); ok {
+			if val, _ := driverValue.Value(); val == nil {
+				return true
+			}
+		}
 		return false
 	}
 
@@ -337,27 +333,24 @@ func isDefaultOrNull(w *bytes.Buffer, e bob.Expression) bool {
 	return strings.EqualFold(s, "DEFAULT") || strings.EqualFold(s, "NULL")
 }
 
-func (t *Table[T, Tslice, Tset]) uniqueSet(w *bytes.Buffer, row []bob.Expression) (int, []bob.Expression) {
-	if len(row) != len(t.nonGeneratedCols) {
-		return -1, nil
-	}
-
+func (t *insertQuery[T, Tslice, Tset]) uniqueSet(w *bytes.Buffer, row []bob.Expression) (int, []bob.Expression) {
 Outer:
-	for i, u := range t.uniqueIdx {
-		colVals := make([]bob.Expression, 0, len(u))
+	for whichUnique, unique := range t.table.uniqueIdx {
+		colVals := make([]bob.Expression, 0, len(unique))
 
-		for _, col := range u {
-			field := row[col]
+		for _, uniqueCol := range unique {
+			insertColIndex := slices.Index(t.Expression.Columns, t.table.setterMapping.All[uniqueCol])
+			insertedField := row[insertColIndex]
 
-			if field == nil || isDefaultOrNull(w, field) {
+			if insertedField == nil || isDefaultOrNull(w, insertedField) {
 				continue Outer
 			}
 
-			colVals = append(colVals, field)
+			colVals = append(colVals, insertedField)
 		}
 
-		if len(colVals) == len(u) {
-			return i, colVals
+		if len(colVals) == len(unique) {
+			return whichUnique, colVals
 		}
 	}
 

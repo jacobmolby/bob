@@ -20,7 +20,7 @@ func TestProcessTypeReplacements(t *testing.T) {
 				{
 					Name:     "name",
 					Type:     "null.String",
-					DBType:   "serial",
+					DBType:   "text",
 					Default:  "some db nonsense",
 					Nullable: true,
 				},
@@ -69,7 +69,8 @@ func TestProcessTypeReplacements(t *testing.T) {
 		},
 	}
 
-	types := map[string]drivers.Type{
+	types := drivers.Types{}
+	types.RegisterAll(map[string]drivers.Type{
 		"excellent.Type": {
 			Imports: []string{`"rock.com/excellent"`},
 		},
@@ -88,7 +89,7 @@ func TestProcessTypeReplacements(t *testing.T) {
 		"xid.ID": {
 			Imports: []string{`"github.com/rs/xid"`},
 		},
-	}
+	})
 
 	replacements := []Replace{
 		{
@@ -100,7 +101,7 @@ func TestProcessTypeReplacements(t *testing.T) {
 		{
 			Tables: []string{"named_table"},
 			Match: drivers.Column{
-				DBType: "serial",
+				Name: "id",
 			},
 			Replace: "excellent.NamedType",
 		},

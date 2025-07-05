@@ -9,10 +9,252 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the `As` method to `clause.TableRef`, which sets the alias and return a copy of the struct. (thanks @Nitjsefni7)
+- Added the `type_system` configuration option to determine how to generate null and optional values in the generated code.
+  Possible options: `github.com/aarondl/opt`, `github.com/aarondl/opt/null` or `database/sql`. The default value is `github.com/aarondl/opt`.
+- When generating code for queries, The `All` method of the generated query will return a struct with nested fields instead of a flat struct.
+  - columns with dots (`.`) are assumed to be a `to-many` nested field.
+  - columns with double underscores (`__`) are assumed to be a `to-one` nested field.
+- Implement `--prefix` annotation in queries for `bobgen-psql`.
+
+### Changed
+
+- `Mod` is now a separate field in `orm.ModQuery` and `orm.ModExecQuery`.
+- `Allx` now takes a `Transformer` type parameter to transform the result of the query.
+- Updated documentation for readability, added code gen examples. (thanks @singhsays)
+
+### Removed
+
+- Removed the `fallback_null` configuration option. It is now replaced with the `type_system` configuration option.
+
+### Fixed
+
+- Fixed some issues with creating relationships in the factory by avoiding trying to reuse models.
+- Fix issues with generating code for queries with duplicate return column names.
+- Updated gen table detail queries to use context. (thanks @singhsays)
+
+## [v0.38.0] - 2025-06-04
+
+### Added
+
+- Added the `fallback_null` top level configuraiton option. Which can be either `database/sql` or `github.com/aarondl/opt/null`.  
+   This is used to determine how to create null values in the generated code. If set to `database/sql`, it will use `sql.Null[T]` for nullable types, and if set to `github.com/aarondl/opt/null`, it will use `opt.null.Val[T]`.  
+   The default value is `database/sql`.
+
+### Fixed
+
+- Correctly build models with nested relationships in the factory.
+- Fix a performance issue with code generation in `bobgen-psql`.
+- Use the correct alias when generating table columns.
+- Fix issue with generating factory code for tables with schema names.
+
+## [v0.37.0] - 2025-05-31
+
+### Added
+
+- Added the `drivers/pgx` package which contains types and functions to use a `pgx/v5` connection as a `bob.Executor`.
+- Added support for `github.com/ncruces/go-sqlite3`. (thanks @ncruces)
+- Added support for configuring what type to generate specific null versions of a type instead of always wrapping with `sql.Null[T]`.
+
+### Changed
+
+- The `bob.Transaction` interface now takes a `context.Context` argument in the `Commit` and `Rollback` methods.
+- The method `BeginTx` on the `bob.Transaction` interface is now changed to `Begin` and it takes a single context argument.  
+   This is to make it easier to implement for non `database/sql` drivers.
+- In the generated model, the `PrimaryKeyVals()` method is now private.
+- Renamed `driver_name` to `driver` in code generation configuration.
+- In type replacements, nullability is not used in matching.
+  Previously, nullability of matches was set to false by default, and would require an additional replacement to also match nullable columns.
+
+### Removed
+
+- Removed the `New` and `NewQueryer` functions. Any of `bob.NewDB`, `bob.NewTx` or `bob.NewConn` can be used instead.
+- Removed the `StdInterface` interface as it is unnecessary.
+- Remove redundant `orm.Model` interface.
+- Remove dependence on `github.com/aarondl/opt` in generated code.
+  - Nullable values are now wrapped `database/sql.Null` with instead of `github.com/aarondl/opt/null.Val`.
+  - Optional values are now represented as pointers instead of `github.com/aarondl/opt/omit.Val[T]`.
+- Removed `in_generated_package` type configuration option. This was limited and could only indicate that the type is in the models package.
+  Instead the full import path can now be used in the `imports` configuration option, and if it is in the same package as the generated code, the prefix will be automatically removed.
+
+### Fixed
+
+- Properly handle `nil` args when checking if default or null in `mysql` table insert query.
+- Fix bug in querying slice relationships in MySQL and SQLite.
+
+## [v0.36.1] - 2025-05-27
+
+### Fixed
+
+- Fixed issue with generating correct test code for nullable args in SQL queries.
+- Fix issue where writing the "NO EDIT Disclaimer" at the top of Go generated files was skipped.
+
+## [v0.36.0] - 2025-05-27
+
+### Changed
+
+- Loaders are now generated as singular instead of plural. This feels more natural when using them in code.
+
+  ```go
+  // Before
+  models.Preload.Users.Pilots()
+  models.SelectThenLoad.Users.Pilots()
+
+  // After
+  models.Preload.User.Pilots()
+  models.SelectThenLoad.User.Pilot()
+  ```
+
+## [v0.35.1] - 2025-05-27
+
+### Fixed
+
+- Store `types.Time` as an RFC3339 string in the DB
+
+## [v0.35.0] - 2025-05-26
+
+### Added
+
+- Added support to generate code for `SELECT`, `INSERT`, `UPDATE` and `DELETE` queries in `bobgen-mysql`.
+- Added support to generate code for `INSERT`, `UPDATE` and `DELETE` queries in `bobgen-sqlite`.
+- Added `LIMIT` and `OFFSET` to the SQLite Update and Delete queries.
+- Added `IndexedBy` and `NotIndexed` mods to the SQLite Delete queries.
+- Added the `Transactor` and `Transaction` interfaces.
+- Added the `SeparatePackageForTests` attribute to generation outputs to indicate if generated tests should have their own package.
+- Added the `RandomColumnNotNull` mod to factories to generate random values for non-nullable columns without the chance of being null.
+- Added the `WithOneRelations` mod to factories to include every relation for a factory template.
+- Added `clause.TableRef` which merges `clause.Table` and `clause.From` since they had overlapping functionality.
+- Added `RunInTx` method to `bob.DB`. This starts a transaction and calls the given function with this transaction.
+- Add support for MySQL to `bobgen-sql`.
+- Added `Exec` test for generated queries that do not return rows.
+- Added `OrderCombined`, `LimitCombined`, `OffsetCombined` mods to MySQL `SELECT` queries. These are applied to the result of a `UNION`, `INTERSECT` or `EXCEPT` query.
+- Added `type_limits` property to column definitions.
+- Added `limits` option to `random_expr` function for types. This is to pass any column limits to the randomization function (e.g. `max_length` for strings).
+- Added tests to check that the generated factory can create models and save into the database.
+- Added the `pgtypes.Snapshot` type for the `pg_snapshot` and `txid_snapshot` type in PostgreSQL.
+- Added a custom `Time` type to the `types` package. This is motivated by the fact that the `libsql` driver does not support the `time.Time` type properly.
+- Added an option to disable aliasing when expressing `orm.Columns`. Also added `EnableAlias` and `DisableAlias` methods to `orm.Columns` to control this behavior.
+- Added a `PrimaryKey` method to `{dialect}.Table` to get the primary key columns of the table.
+
+### Changed
+
+- Changed the INDEXED BY and NOT INDEXED mods for SQLite update queries from `TableIndexedBy` and `TableNotIndexed` to `IndexedBy` and `NotIndexed`.
+- Use `LIBSQL_TEST_SERVER` environment variable to run tests against a libSQL server instead of the hardcoded `localhost:8080`.
+- `BeginTx` now returns a `Transaction` interface instead of a `bob.Tx`.
+- Generated tests that required a database connection no longer create a new connection for each test. Instead it depends on a `testDB` connection that the user has to provide.
+- In the generated models, relationships for `ModelSlice` are now loaded using arrays to reduce the number of parameter in the query.
+
+  ```sql
+  -- Before
+  SELECT * FROM pilots WHERE jet_id IN ($1, $2, $3, ...); -- Parameters increase with the number of pilots
+
+  -- After
+  SELECT * FROM pilots WHERE jet_id IN (SELECT unnest(CAST($1 AS integer[])); -- Parameters are always 1
+  ```
+
+- In the generated model code, `Preload` is now a struct instead of multiple standaalone functions.  
+   It is now used like `Preload.User.Pilots()`, instead of `PreloadUserPilots()`.
+- In the generated model code, `ThenLoad` is now a struct and has been split for each query type.  
+   It is now used like `SelectThenLoad.User.Pilots()`, instead of `ThenLoadUserPilots()`.
+- In the generated model code, the **Load** interfaces no longer include the name of the source model since it is a method on the model.  
+   It now looks like `*models.User.LoadPilots` instead of `*models.User.LoadUserPilots`.
+- Made changes to better support generating code in multiple languages.
+- Mark queries with `ON DUPLICATE KEY UPDATE` as unretrievable in MySQL.
+- Unretrievable `INSERT` queries using `One, All, Cursor` now immediately return `orm.ErrCannotRetrieveRow` instead of executing the query first.
+- Generated tests are now run when testing drivers.
+- `MEDIUMINT` and `MEDIUMINT UNSIGNED` are now generated as `int16` and `uint16` respectively. This is because Go doe not support 24 bit integers.
+- The randomization function for floats, strings, and decimals now respect the limits set in the column definition.
+- `txid_snapshot` is now generated as `pgtypes.Snapshot` instead of `pgtypes.TxIDSnapshot`.
+- `cidr` postgres type is now generated as `types.Text[netip.Prefix]` instead of `types.Text[netip.Addr]`.
+- `money` postgres type is now generated as a string with a custom randomization expression instead of a decimal.
+- Factory template mods now take a context argument. This allows for more control when using recursive mods.
+- Removed `WithOneRelations` mod from factories, now replaced with `WithParentsCascading` which also includes parents for any parent relationships.
+
+### Removed
+
+- Removed `clause.Table` and `clause.From`, and merge into `clause.TableRef` since they had overlapping functionality.
+- Remove unnecessary context closure in generated join helpers.
+- Remove the deprecated `wipe` generation option.
+- Remove `pgtypes.TxIDSnapshot` type. This is now replaced with `pgtypes.Snapshot`.
+
+### Fixed
+
+- Use correct row name for generated queries in `bobgen-sqlite`.
+- Properly select query comment in `bobgen-sqlite`.
+- Fixed issue with using generated queries with `VALUES` as mods.
+- Moved `Partitions` in MySQL delete queries to after the table alias.
+- Fixed issue with inserting into a table with all rows having default values in SQLite.
+- Use table name and not table alias in SQLite returning clause since the alias is not available in the `RETURNING` clause.
+- Fixed generated unique constraint errors for SQLite.
+- Correctly resuse inserted rows in factories.
+
+## [v0.34.2] - 2025-05-01
+
+### Fixed
+
+- Fix bug with `bobgen-psql` parsing of string identifiers in certain cases.
+
+## [v0.34.1] - 2025-04-30
+
+### Fixed
+
+- Remove unnecessary limitation to place `FETCH WITH TIES` before `OFFSET`.
+- Fix issue with verifying statements in `bobgen-psql`.
+
+## [v0.34.0] - 2025-04-30
+
+### Added
+
+- Added support to generate code for `UPDATE`, and `DELETE` queries in `bobgen-psql`.
+
+### Changed
+
+- Changed to non-cgo version of postgres parser.
+- Changed the `dir` configuration for `bobgen-sql` to `pattern` and it now takes a glob pattern. This allows excluding certain files from being included (e.g. `.down.sql` files).
+
+## [v0.33.1] - 2025-04-26
+
+### Changed
+
+- When a query returns only one column, instead of returning a struct with one field, it will return the type of the column. This is to make it easier to use the generated code.
+
+### Fixed
+
+- Fix panic when scanning returned rows from generated queries.
+
+## [v0.33.0] - 2025-04-26
+
+### Added
+
+- Added support to generate code for `INSERT` queries in `bobgen-psql`.
+- `clause.Confict` now takes `bob.Expression`, and the fields are now moved to a `clause.ConflictClause` struct.
+
+### Changed
+
+- Make grouped types in generated queries a type alias.
+
+### Removed
+
+- Remove `models.InsertWhere` in generated code since it is not correct.
+
+### Fixed
+
+- Fix issue with column query annotations in `bobgen-psql`.
+- Fix issue with parsing multiple queries in the same file in `bobgen-psql`.
+- Fix issue with correctly detecting the comment for the query annotation in `bobgen-psql`.
+- Use a transaction in generated query tests.
+- Account for LEFT, RIGHT and FULL joins when determining the nullability of a column.
+- Generate WHERE helpers for `ON CONFLICT` clauses.
+
+## [v0.32.0] - 2025-04-24
+
+### Added
+
 - Added templates for query generation.
 - Added `clause.OrderBy.ClearOrderBy()`
 - Added `expr.ToArgs` and `expr.ToArgGroup` functions to convert slices of a type to args.
 - Add `queries` key to `bobgen-sql` and `bobgen-sqlite` configuration. This is used to specify what folder to search for queries in.
+- Implement the Postgres query parser for `SELECT` statements.
 - Implement the SQLite query parser for `SELECT` statements.
 - Add templates for query generation.
 - Add `camelCase` template function.
@@ -22,16 +264,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Update `mvdan.cc/gofumpt` and give precedence to toolchain when calculating the Go version.
+- Update `mvdan.cc/gofumpt` and give precedence to toolchain when calculating the Go version. (thanks @isgj)
 - Add custom comparison support when loading relationships.
 - Fix issue with scanning Postgres inet type.
+- Set `Arg` and `ArgGroup` to `NULL` if there are no values.
+- Do not call `BeforeInsertHooks` in the insert mod of a view.
+- Fix issue with retrieving inserted rows with the MySQL driver.
+- Add custom comparison for relationship loading. (thanks @kostaspt)
 
 ### Changed
 
 - `clause.With` now takes `bob.Expression` instead of `clause.CTE`. This makes it easier to use in generated queries without reconstruction an `CTE`.
 - `clause.OrderBy` now takes `bob.Expression` instead of `clause.OrderDef`. This makes it easier to use in generated queries without reconstruction an `OrderDef`.
 - `clause.Windows` now takes `bob.Expression` instead of `clause.NamedWindow`. This makes it easier to use in generated queries without reconstruction the window.
+- `clause.For` renemaed to `clause.Locks` and can now take multiple locks.
+- `clause.Fetch` now takes `any` instead of an integer.
 - Several changes to the `drivers.Query` type as support is added for the new query parser.
+- Enum types can now be matched by `db_type` in bobgen-psql as `schema.enum_type`. (thanks @abramlab)
 
 ### Removed
 

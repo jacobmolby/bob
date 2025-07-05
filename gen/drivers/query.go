@@ -3,27 +3,98 @@ package drivers
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
-	"github.com/aarondl/opt/omit"
 	"github.com/stephenafamo/bob"
+	"github.com/stephenafamo/bob/gen/language"
+	"github.com/stephenafamo/bob/internal"
 	"github.com/stephenafamo/bob/orm"
 	"github.com/volatiletech/strmangle"
 )
 
 type TemplateInclude interface {
-	IncludeInTemplate(Importer) string
+	IncludeInTemplate(language.Importer) string
 }
 
 type QueryFolder struct {
-	Path  string
-	Files []QueryFile
+	Path  string      `json:"path"`
+	Files []QueryFile `json:"files"`
+}
+
+func (q QueryFolder) Types() []string {
+	types := []string{}
+	for _, file := range q.Files {
+		for _, query := range file.Queries {
+			for _, col := range query.Columns {
+				types = append(types, col.TypeName)
+			}
+			for _, arg := range query.Args {
+				types = append(types, arg.Types()...)
+			}
+		}
+	}
+
+	slices.Sort(types)
+	return slices.Compact(types)
 }
 
 type QueryFile struct {
-	Path    string
-	Queries []Query
+	Path    string  `json:"path"`
+	Queries []Query `json:"queries"`
+}
+
+func (q QueryFile) BaseName() string {
+	if q.Path == "" {
+		return ""
+	}
+
+	base := filepath.Base(q.Path)
+	if base == "" {
+		return ""
+	}
+
+	return base[:len(base)-4]
+}
+
+func (q QueryFile) Formatted() string {
+	if len(q.Queries) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	for i, query := range q.Queries {
+		if i > 0 {
+			sb.WriteString("\n\n") // 2 extra new line between queries
+		}
+		fmt.Fprintf(&sb, "-- %s\n%s;", query.Name, query.SQL)
+	}
+
+	return sb.String()
+}
+
+func (q QueryFile) QueryPosition(i int, headerLen int) string {
+	if i >= len(q.Queries) {
+		return "-1:-1"
+	}
+
+	position := headerLen
+	for index, query := range q.Queries {
+		if index > 0 {
+			position += 3 // semi-colon and 2 new lines between queries
+		}
+
+		position += len(query.Name) + 4 // 2 dashes and a space before, and a newline after
+
+		if index == i {
+			return fmt.Sprintf("%d:%d", position, position+len(query.SQL))
+		}
+
+		position += len(query.SQL)
+	}
+
+	return fmt.Sprintf("%d:%d", position, position+len(q.Queries[i].SQL))
 }
 
 type Query struct {
@@ -32,7 +103,7 @@ type Query struct {
 	Type   bob.QueryType `json:"type"`
 	Config QueryConfig   `json:"config"`
 
-	Columns []QueryCol      `json:"columns"`
+	Columns QueryCols       `json:"columns"`
 	Args    []QueryArg      `json:"args"`
 	Mods    TemplateInclude `json:"mods"`
 }
@@ -108,115 +179,88 @@ func (q Query) HasMultipleArgs() bool {
 	return false
 }
 
-// ParseQueryConfig parses a user configuration string into a QueryCoonfig.
-// The configuration string should be in the format:
-// "row_name:row_slice_name:generate_row"
-func ParseQueryConfig(options string) QueryConfig {
-	var i int
-	var part string
-	var found bool
-
-	col := QueryConfig{
-		GenerateRow: true,
-	}
-	for {
-		part, options, found = strings.Cut(options, ":")
-		switch i {
-		case 0:
-			col.RowName = part
-		case 1:
-			col.RowSliceName = part
-		case 2:
-			switch part {
-			case "true", "yes":
-				col.GenerateRow = true
-			case "false", "no", "skip":
-				col.GenerateRow = false
-			}
-		}
-		if !found {
-			break
-		}
-		i++
-	}
-
-	return col
-}
-
-// ParseQueryColumnConfig parses a user configuration string into a QueryCol.
-// The configuration string should be in the format:
-// "name:type:notnull"
-func ParseQueryColumnConfig(options string) QueryCol {
-	var i int
-	var part string
-	var found bool
-
-	col := QueryCol{}
-	for {
-		part, options, found = strings.Cut(options, ":")
-		switch i {
-		case 0:
-			col.Name = part
-		case 1:
-			col.TypeName = part
-		case 2:
-			switch part {
-			case "null", "true", "yes":
-				col.Nullable.Set(true)
-			case "notnull", "nnull", "false", "no":
-				col.Nullable.Set(false)
-			}
-		}
-		if !found {
-			break
-		}
-		i++
-	}
-
-	return col
-}
-
 type QueryConfig struct {
-	RowName      string `json:"row_name"`
-	RowSliceName string `json:"row_slice_name"`
-	GenerateRow  bool   `json:"generate_row"`
+	ResultTypeOne     string `json:"result_type_one"`
+	ResultTypeAll     string `json:"result_type_all"`
+	ResultTransformer string `json:"result_type_transformer"`
 }
 
 func (q QueryConfig) Merge(other QueryConfig) QueryConfig {
-	if other.RowName != "" {
-		q.RowName = other.RowName
+	if other.ResultTypeOne != "" {
+		q.ResultTypeOne = other.ResultTypeOne
 	}
 
-	if other.RowSliceName != "" {
-		q.RowSliceName = other.RowSliceName
+	if other.ResultTypeAll != "" {
+		q.ResultTypeAll = other.ResultTypeAll
 	}
 
-	q.GenerateRow = q.GenerateRow && other.GenerateRow
+	if other.ResultTransformer != "" {
+		q.ResultTransformer = other.ResultTransformer
+	}
 
 	return q
 }
 
 type QueryCol struct {
-	Name     string         `json:"name"`
-	DBName   string         `json:"db_name"`
-	Nullable omit.Val[bool] `json:"nullable"`
-	TypeName string         `json:"type"`
+	Name       string   `json:"name"`
+	DBName     string   `json:"db_name"`
+	Nullable   *bool    `json:"nullable"`
+	TypeName   string   `json:"type"`
+	TypeLimits []string `json:"type_limits"`
 }
 
-func (q QueryCol) Merge(other QueryCol) QueryCol {
-	if other.Name != "" {
-		q.Name = other.Name
-	}
+func (q QueryCol) Merge(others ...QueryCol) QueryCol {
+	for _, other := range others {
+		if other.Name != "" {
+			q.Name = other.Name
+		}
 
-	if other.TypeName != "" {
-		q.TypeName = other.TypeName
-	}
+		if other.TypeName != "" {
+			q.TypeName = other.TypeName
+		}
 
-	if other.Nullable.IsSet() {
-		q.Nullable = other.Nullable
+		if other.Nullable != nil {
+			q.Nullable = other.Nullable
+		}
 	}
 
 	return q
+}
+
+type QueryCols []QueryCol
+
+func (q QueryCols) WithNames() QueryCols {
+	newCols := slices.Clone(q)
+	names := make(map[string]int, len(newCols))
+	for i := range newCols {
+		if newCols[i].Name == "" {
+			continue
+		}
+		name := strmangle.TitleCase(newCols[i].Name)
+		index := names[name]
+		names[name] = index + 1
+		if index > 0 {
+			name = fmt.Sprintf("%s%d", name, index+1)
+		}
+		newCols[i].Name = name
+	}
+
+	return newCols
+}
+
+func (q QueryCols) NameAt(i int) string {
+	earlyDuplicates := 0
+	for _, col := range q[:i] {
+		if col.Name == q[i].Name {
+			earlyDuplicates++
+		}
+	}
+
+	if earlyDuplicates > 0 {
+		return fmt.Sprintf("%s_%d", q[i].Name, earlyDuplicates+1)
+	}
+
+	return q[i].Name
 }
 
 type QueryArg struct {
@@ -227,63 +271,111 @@ type QueryArg struct {
 	CanBeMultiple bool `json:"can_be_multiple"`
 }
 
-func (c QueryCol) Type(i Importer, types Types) string {
-	typ := c.TypeName
-
-	typDef, ok := types[typ]
-	if ok && typDef.AliasOf != "" {
-		typ = typDef.AliasOf
+func (q QueryArg) Types() []string {
+	if len(q.Children) == 0 {
+		return []string{q.Col.TypeName}
 	}
 
-	i.ImportList(typDef.Imports)
-	if c.Nullable.MustGet() {
-		i.Import("github.com/aarondl/opt/null")
-		typ = fmt.Sprintf("null.Val[%s]", typ)
+	types := make([]string, 0, len(q.Children))
+	for _, child := range q.Children {
+		types = append(types, child.Types()...)
 	}
 
-	return typ
+	return types
 }
 
-func (c QueryArg) Type(i Importer, types Types) string {
-	if len(c.Children) == 0 {
-		if c.CanBeMultiple {
-			return "[]" + c.Col.Type(i, types)
-		}
-
-		return c.Col.Type(i, types)
+func (c QueryCol) Type(currPkg string, i language.Importer, types Types) string {
+	if c.Nullable == nil {
+		panic(fmt.Sprintf("Column %s has no nullable value defined", c.Name))
 	}
 
+	return types.GetNullable(currPkg, i, c.TypeName, *c.Nullable)
+}
+
+func (c QueryArg) RandomExpr(currPkg string, i language.Importer, types Types) string {
+	typ := c.TypeDef(currPkg, i, types)
 	var sb strings.Builder
-	sb.WriteString("struct{\n")
-	for _, child := range c.Children {
-		sb.WriteString(strmangle.CamelCase(child.Col.Name))
-		sb.WriteString(" ")
-		sb.WriteString(child.Type(i, types))
-		sb.WriteString("\n")
-	}
-	sb.WriteString("}")
 
 	if c.CanBeMultiple {
-		return "[]" + sb.String()
+		fmt.Fprintf(&sb, "[]%s{", typ)
+	} else if len(c.Children) > 0 {
+		sb.WriteString(typ)
+	}
+
+	if len(c.Children) == 0 {
+		if c.Col.Nullable != nil && *c.Col.Nullable {
+			colTyp, _ := types.GetNameAndDef(currPkg, c.Col.TypeName)
+			nullTyp := types.GetNullType(currPkg, c.Col.TypeName)
+			i.ImportList(nullTyp.CreateExprImports)
+			normalized := internal.TypesReplacer.Replace(colTyp)
+			return strings.NewReplacer(
+				"SRC", fmt.Sprintf("random_%s(nil)", normalized),
+				"BASETYPE", colTyp,
+				"NULLTYPE", nullTyp.Name,
+				"NULLVAL", "true",
+			).Replace(nullTyp.CreateExpr)
+		} else {
+			normalized := internal.TypesReplacer.Replace(typ)
+			fmt.Fprintf(&sb, "random_%s(nil)", normalized)
+		}
+	} else {
+		sb.WriteString("{")
+		for _, child := range c.Children {
+			sb.WriteString(strmangle.TitleCase(child.Col.Name))
+			sb.WriteString(": ")
+			sb.WriteString(child.RandomExpr(currPkg, i, types))
+			sb.WriteString(",\n")
+		}
+		sb.WriteString("}")
+	}
+
+	if c.CanBeMultiple {
+		sb.WriteString("}")
 	}
 
 	return sb.String()
 }
 
-func (a QueryArg) ToExpression(dialect, queryName, varName string) string {
+func (c QueryArg) Type(currPkg string, i language.Importer, types Types) string {
+	if c.CanBeMultiple {
+		return "[]" + c.TypeDef(currPkg, i, types)
+	}
+	return c.TypeDef(currPkg, i, types)
+}
+
+func (c QueryArg) TypeDef(currPkg string, i language.Importer, types Types) string {
+	if len(c.Children) == 0 {
+		return c.Col.Type(currPkg, i, types)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("struct{\n")
+	for _, child := range c.Children {
+		sb.WriteString(strmangle.TitleCase(child.Col.Name))
+		sb.WriteString(" ")
+		sb.WriteString(child.Type(currPkg, i, types))
+		sb.WriteString("\n")
+	}
+	sb.WriteString("}")
+
+	return sb.String()
+}
+
+func (a QueryArg) ToExpression(i language.Importer, dialect, queryName, varName string) string {
 	if len(a.Children) == 0 {
 		if a.CanBeMultiple {
 			return fmt.Sprintf("expr.ToArgs(%s...)", varName)
 		}
 
+		i.Import("github.com/stephenafamo/bob/dialect/" + dialect)
 		return fmt.Sprintf("%s.Arg(%s)", dialect, varName)
 	}
 
 	if !a.CanBeMultiple {
-		return a.groupExpression(dialect, queryName, varName)
+		return a.groupExpression(i, dialect, queryName, varName)
 	}
 
-	groupExpression := a.groupExpression(dialect, queryName, "child")
+	groupExpression := a.groupExpression(i, dialect, queryName, "child")
 	sb := strings.Builder{}
 	sb.WriteString(fmt.Sprintf(`func() bob.Expression {
             expressions := make([]bob.Expression, len(%s))
@@ -297,7 +389,7 @@ func (a QueryArg) ToExpression(dialect, queryName, varName string) string {
 	return sb.String()
 }
 
-func (a QueryArg) groupExpression(dialect, queryName, varName string) string {
+func (a QueryArg) groupExpression(i language.Importer, dialect, queryName, varName string) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf(`bob.ExpressionFunc(func(ctx context.Context, w io.Writer, d bob.Dialect, start int) ([]any, error) {
@@ -305,7 +397,8 @@ func (a QueryArg) groupExpression(dialect, queryName, varName string) string {
 
 	start := a.Positions[0][0]
 	for _, child := range a.Children {
-		childName := strmangle.CamelCase(child.Col.Name)
+		childName := strmangle.TitleCase(child.Col.Name)
+		childExpression := child.ToExpression(i, dialect, queryName, fmt.Sprintf("%s.%s", varName, childName))
 		sb.WriteString(fmt.Sprintf(`
             w.Write([]byte(%sSQL[%d:%d]))
             %sArgs, err := bob.Express(ctx, w, d, start+len(args), %s)
@@ -316,7 +409,7 @@ func (a QueryArg) groupExpression(dialect, queryName, varName string) string {
             `,
 			queryName, start, child.Positions[0][0],
 			childName,
-			child.ToExpression(dialect, queryName, fmt.Sprintf("%s.%s", varName, childName)),
+			strings.TrimSpace(childExpression),
 			childName,
 		))
 		start = child.Positions[0][1]

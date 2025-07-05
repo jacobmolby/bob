@@ -7,13 +7,23 @@ description: How to configure Bob's code generation
 
 > Driver specific configuration option and instructions can be found on their individual pages.
 
-Configuration is done in a `bobgen.yaml` file in the same directory. A different configuration file can be passed with the `-c` or `--config` flag.
+code generation is configured through a yaml configuration file (defaults to `./bobgen.yaml` in the current directory). A different configuration file can be passed with the `-c` or `--config` flag.
 
-The configuration is marshalled in to the [Config struct](https://pkg.go.dev/github.com/stephenafamo/bob/gen#Config).
+The configuration is unmarshalled into the following [Config](https://pkg.go.dev/github.com/stephenafamo/bob/gen#Config) struct.
+
 
 ```go
 // Config for the running of the commands
 type Config struct {
+	// Convention and library used for handling null and optional types
+	// available options are:
+	// - "github.com/aarondl/opt" (default)
+	//    * Uses null.Val[T] for optional values
+	//    * Uses null.Null[T] for nullable values
+	// - "database/sql"
+	//    * Uses pointers for optional values
+	//	  * Uses sql.Null[T] for nullable values
+	TypeSystem string `yaml:"type_system"`
 	// Struct tags to generate
 	Tags []string `yaml:"tags"`
 	// Disable generating factories for models
@@ -22,8 +32,6 @@ type Config struct {
 	NoTests bool `yaml:"no_tests"`
 	// Disable back referencing in the loaded relationship structs
 	NoBackReferencing bool `yaml:"no_back_referencing"`
-	// Delete the output folder (rm -rf) before generation to ensure sanity
-	Wipe bool `yaml:"wipe"`
 	// Decides the casing for go structure tag names. camel, title or snake (default snake)
 	StructTagCasing string `yaml:"struct_tag_casing"`
 	// Relationship struct tag name
@@ -46,23 +54,24 @@ type Config struct {
 }
 ```
 
-| Name                | Description                                                                                                     | Default |
-|---------------------|-----------------------------------------------------------------------------------------------------------------|---------|
-| tags                | Struct tags to generate                                                                                         | []      |
-| no_factory          | Disable generating factories for models                                                                         | false   |
-| no_tests            | Disable generating go test files                                                                                | false   |
-| no_back_referencing | If this is set to true, when relationships are loaded, the parent is not added to the loaded object's relations | false   |
-| wipe                | If to delete the output folder before generation                                                                | false   |
-| struct_tag_casing   | Decides the casing for go structure tag names. camel, title or snake (default snake)                            | "snake" |
-| relation_tag        | Struct tag for the relationship object                                                                          | "-"     |
-| tag_ignore          | List of column names that should have tags values set to '-'                                                    | []      |
-| types               | Register custom types. [See more](#types)                                                                       | "{}     |
-| aliases             | Customize aliases. [See more](#aliases)                                                                         | {}      |
-| constraints         | Define additional constraints. [See more](#constraints)                                                         | {}      |
-| relationships       | Define additional relationships. [See more](#relationships)                                                     | {}      |
-| replacements        | Define replacements for types. [See more](#replacements)                                                        | []      |
-| inflections         | Define inflections for pluralization. [See more](#inflections)                                                  | {}      |
-| generator           | Customize the generator name in the top level comment of generated files                                        | ""      |
+| Name                | Description                                                                                                     | Default                  |
+| ------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| type_system         | How to handle optional and nullable types. Available options are `github.com/aarondl/opt` and `database/sql`    | "github.com/aarondl/opt" |
+| tags                | Struct tags to generate                                                                                         | []                       |
+| no_factory          | Disable generating factories for models                                                                         | false                    |
+| no_tests            | Disable generating go test files                                                                                | false                    |
+| no_back_referencing | If this is set to true, when relationships are loaded, the parent is not added to the loaded object's relations | false                    |
+| wipe                | If to delete the output folder before generation                                                                | false                    |
+| struct_tag_casing   | Decides the casing for go structure tag names. camel, title or snake (default snake)                            | "snake"                  |
+| relation_tag        | Struct tag for the relationship object                                                                          | "-"                      |
+| tag_ignore          | List of column names that should have tags values set to '-'                                                    | []                       |
+| types               | Register custom types. [See more](#types)                                                                       | "{}                      |
+| aliases             | Customize aliases. [See more](#aliases)                                                                         | {}                       |
+| constraints         | Define additional constraints. [See more](#constraints)                                                         | {}                       |
+| relationships       | Define additional relationships. [See more](#relationships)                                                     | {}                       |
+| replacements        | Define replacements for types. [See more](#replacements)                                                        | []                       |
+| inflections         | Define inflections for pluralization. [See more](#inflections)                                                  | {}                       |
+| generator           | Customize the generator name in the top level comment of generated files                                        | ""                       |
 
 ## Aliases
 
@@ -129,6 +138,24 @@ To prevent generating a test for the random expression, set `no_randomization_te
 In certain cases, it is necessary to compare values of the type to determine if they are equal.
 In such cases, you can provide a `compareExpr` which is an expression that compares two values of the type. Use the placeholders `AAA` and `BBB` as the types to be compared.
 
+### Imports
+
+The `imports` key is used to specify any imports that are needed for the type.  
+The first import is the package that contains the type, and the rest are any other imports that are needed.
+
+For example, for the type `types.JSON[json.RawMessage]`, the imports will look like this:
+
+```yaml
+types:
+  type.JSON[json.RawMessage]:
+    # ......
+    imports:
+      - '"encoding/json"'
+      - '"github.com/stephenafamo/bob/types"'
+```
+
+### Example Types Configuration
+
 ```yaml
 types:
   xml:
@@ -138,30 +165,39 @@ types:
     # If this depends on another type, you can specify the type here
     depends_on:
       - "string"
-    # The random expression for this type
+    # To be used in factory.random_type
+    # Use TYPE as a placeholder for the type
+    # * a variable `f` of type `faker.Faker` is available
+    # * another variable `limits` which is a slice of strings with any limits
+    #   for example, a VARCHAR(255) would have limits = ["255"]
+    #   another example, a DECIMAL(10,2) would have limits = ["10", "2"]
     random_expr: |-
       tag := f.Lorem().Word()
       return fmt.Sprintf("<%s>%s</%s>", tag, f.Lorem().Word(), tag)
   LocalType:
-    # Set this to true if your custom type is declared in the generated package (i.e. "models").
-    # If this is not the case, "models." will not be prefixed in the generated factory.
-    in_generated_package: true
     no_randomization_test: true
     random_expr: |
       localType := models.LocalType{}
       return localType
+    # IMPORTANT: If the type is in the models package, you should specify the import alias
+    imports:
+      - 'models "github.com/path/to/models"'
   type.JSON[json.RawMessage]:
     # If true, a test for the random expression will not be generated
     no_randomization_test: false
+    # Any imports that are needed for the type
     imports:
       - '"encoding/json"'
       - '"github.com/stephenafamo/bob/types"'
     # To be used in factory.random_type
     # a variable `f` of type `faker.Faker` is available
+    # another variable `limits` which is a slice of strings with any limits
+    # for example, a VARCHAR(255) would have limits = ["255"]
+    # another example, a DECIMAL(10,2) would have limits = ["10", "2"]
     random_expr: |-
       s := &bytes.Buffer{}
       s.WriteRune('{')
-      for i := 0; i < f.IntBetween(1, 5); i++ {
+      for i := range f.IntBetween(1, 5) {
           if i > 0 {
               fmt.Fprint(s, ", ")
           }
@@ -175,7 +211,7 @@ types:
       - '"fmt"'
     # CompareExpr is used to compare two values of this type
     # if not provided, == is used
-    # Used AAA and BBB as placeholders for the two values
+    # Use AAA and BBB as placeholders for the two values
     compare_expr: |-
       bytes.Equal(AAA.Val, BBB.Val)
     # Imports for the compare expression

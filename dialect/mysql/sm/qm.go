@@ -180,8 +180,8 @@ func ExceptAll(q bob.Query) bob.Mod[*dialect.SelectQuery] {
 }
 
 func ForUpdate(tables ...string) dialect.LockChain[*dialect.SelectQuery] {
-	return dialect.LockChain[*dialect.SelectQuery](func() clause.For {
-		return clause.For{
+	return dialect.LockChain[*dialect.SelectQuery](func() clause.Lock {
+		return clause.Lock{
 			Strength: clause.LockStrengthUpdate,
 			Tables:   tables,
 		}
@@ -189,11 +189,34 @@ func ForUpdate(tables ...string) dialect.LockChain[*dialect.SelectQuery] {
 }
 
 func ForShare(tables ...string) dialect.LockChain[*dialect.SelectQuery] {
-	return dialect.LockChain[*dialect.SelectQuery](func() clause.For {
-		return clause.For{
+	return dialect.LockChain[*dialect.SelectQuery](func() clause.Lock {
+		return clause.Lock{
 			Strength: clause.LockStrengthShare,
 			Tables:   tables,
 		}
+	})
+}
+
+// To apply order to the result of a UNION, INTERSECT, or EXCEPT query
+func OrderCombined(e any) dialect.OrderCombined {
+	return dialect.OrderCombined(func() clause.OrderDef {
+		return clause.OrderDef{
+			Expression: e,
+		}
+	})
+}
+
+// To apply limit to the result of a UNION, INTERSECT, or EXCEPT query
+func LimitCombined(count int64) bob.Mod[*dialect.SelectQuery] {
+	return bob.ModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
+		q.CombinedLimit.SetLimit(count)
+	})
+}
+
+// To apply offset to the result of a UNION, INTERSECT, or EXCEPT query
+func OffsetCombined(count int64) bob.Mod[*dialect.SelectQuery] {
+	return bob.ModFunc[*dialect.SelectQuery](func(q *dialect.SelectQuery) {
+		q.CombinedOffset.SetOffset(count)
 	})
 }
 

@@ -44,34 +44,17 @@
         {{$sideC := $sideTable.GetColumn .Column -}}
         {{$colName := $sideAlias.Column $map.Column -}}
         {{if .HasValue -}}
-          {{if $sideC.Nullable }}
-            {{$.Importer.Import "github.com/aarondl/opt/omitnull" -}}
-            {{$tblName}}.{{$colName}} = omitnull.From({{index .Value 1}})
-          {{else}}
-            {{$.Importer.Import "github.com/aarondl/opt/omit" -}}
-            {{$tblName}}.{{$colName}} = omit.From({{index .Value 1}})
-          {{end}}
-        {{- else -}}
+          {{$val := index .Value 1 -}}
+          {{$tblName}}.{{$colName}} = &{{$.Tables.ColumnSetter $.CurrentPackage $.Importer $.Types $side.TableName .Column $val "true"}}
+        {{else}}
           {{$a := $.Aliases.Table .ExternalTable -}}
           {{$t := $.Tables.Get .ExternalTable -}}
           {{$c := $t.GetColumn .ExternalColumn -}}
-          {{$colVal := printf "%s%d.%s" $a.DownSingular $map.ExtPosition ($a.Column $map.ExternalColumn) -}}
+          {{$colVal := printf "%s%d" $a.DownSingular $map.ExtPosition -}}
           {{if $rel.NeedsMany .ExtPosition -}}
-            {{$colVal = printf "%s%d[i].%s" $a.DownPlural $map.ExtPosition ($a.Column $map.ExternalColumn) -}}
+            {{$colVal = printf "%s%d[i]" $a.DownPlural $map.ExtPosition -}}
           {{end -}}
-          {{if and $sideC.Nullable $c.Nullable }}
-            {{$.Importer.Import "github.com/aarondl/opt/omitnull" -}}
-            {{$tblName}}.{{$colName}} = omitnull.FromNull({{$colVal}})
-          {{else if $sideC.Nullable }}
-            {{$.Importer.Import "github.com/aarondl/opt/omitnull" -}}
-            {{$tblName}}.{{$colName}} = omitnull.From({{$colVal}})
-          {{else if $c.Nullable}}
-            {{$.Importer.Import "github.com/aarondl/opt/omit" -}}
-            {{$tblName}}.{{$colName}} = omit.FromCond({{$colVal}}.GetOrZero(), {{$colVal}}.IsSet())
-          {{else}}
-            {{$.Importer.Import "github.com/aarondl/opt/omit" -}}
-            {{$tblName}}.{{$colName}} = omit.From({{$colVal}})
-          {{- end}}
+          {{$tblName}}.{{$colName}} = {{$.Tables.ColumnAssigner $.CurrentPackage $.Importer $.Types $.Aliases $rel.Foreign .ExternalTable $map.Column .ExternalColumn $colVal true}}
         {{- end}}
       {{- end}}
     {{- if $rel.IsToMany}}}{{end}}
@@ -118,50 +101,15 @@
           {{$tableAlias := $.Aliases.Table .ExternalTable -}}
           {{$table := $.Tables.Get .ExternalTable -}}
           {{$column := $table.GetColumn .ExternalColumn -}}
-          {{if $rel.NeedsMany .ExtPosition -}}
-            {{if .HasValue -}}
-              {{if $sideColumn.Nullable }}
-                {{$.Importer.Import "github.com/aarondl/opt/omitnull" -}}
-                {{$colName}}: omitnull.From({{index .Value 1}}),
-              {{else}}
-                {{$.Importer.Import "github.com/aarondl/opt/omit" -}}
-                {{$colName}}: omit.From({{index .Value 1}}),
-              {{end}}
-            {{- else -}}
-              {{$colVal := printf "%s%d.%s" $tableAlias.DownSingular $map.ExtPosition ($tableAlias.Column $map.ExternalColumn) -}}
-              {{if $rel.NeedsMany .ExtPosition -}}
-                {{$colVal = printf "%s%d[i].%s" $tableAlias.DownPlural $map.ExtPosition ($tableAlias.Column $map.ExternalColumn) -}}
-              {{end -}}
-              {{if and $sideColumn.Nullable $column.Nullable -}}
-                {{$.Importer.Import "github.com/aarondl/opt/omitnull"}}
-                {{$colName}}: omitnull.FromNull({{$colVal}}),
-              {{else if $sideColumn.Nullable -}}
-                {{$.Importer.Import "github.com/aarondl/opt/omitnull"}}
-                {{$colName}}: omitnull.From({{$colVal}}),
-              {{else if $column.Nullable -}}
-                {{$.Importer.Import "github.com/aarondl/opt/omit"}}
-                {{$colName}}: omit.FromCond({{$colVal}}.GetOrZero(), {{$colVal}}.IsSet()),
-              {{else -}}
-                {{$.Importer.Import "github.com/aarondl/opt/omit"}}
-                {{$colName}}: omit.From({{$colVal}}),
-              {{- end}}
-            {{- end}}
-          {{- else}}
-
-            {{$colVal := printf "%s%d.%s" $tableAlias.DownSingular $map.ExtPosition ($tableAlias.Column $map.ExternalColumn) -}}
-            {{if and $sideColumn.Nullable $column.Nullable -}}
-                {{$.Importer.Import "github.com/aarondl/opt/omitnull"}}
-                {{$colName}}: omitnull.FromNull({{$colVal}}),
-              {{else if $sideColumn.Nullable -}}
-                {{$.Importer.Import "github.com/aarondl/opt/omitnull"}}
-                {{$colName}}: omitnull.From({{$colVal}}),
-              {{else if $column.Nullable -}}
-                {{$.Importer.Import "github.com/aarondl/opt/omit"}}
-                {{$colName}}: omit.FromCond({{$colVal}}.GetOrZero(), {{$colVal}}.IsSet()),
-              {{else -}}
-                {{$.Importer.Import "github.com/aarondl/opt/omit"}}
-                {{$colName}}: omit.From({{$colVal}}),
-              {{- end}}
+          {{if .HasValue -}}
+            {{$val := index .Value 1 -}}
+            {{$colName}}: &{{$.Tables.ColumnSetter $.CurrentPackage $.Importer $.Types $side.TableName .Column $val "true"}},
+          {{else}}
+            {{$colVal := printf "%s%d" $tableAlias.DownSingular $map.ExtPosition -}}
+            {{if $rel.NeedsMany .ExtPosition -}}
+              {{$colVal = printf "%s%d[i]" $tableAlias.DownPlural $map.ExtPosition -}}
+            {{end -}}
+            {{$colName}}: {{$.Tables.ColumnAssigner $.CurrentPackage $.Importer $.Types $.Aliases $side.TableName $table.Key $map.Column .ExternalColumn $colVal true}},
           {{- end}}
         {{- end}}
       }
@@ -193,34 +141,17 @@
           {{$sideC := $sideTable.GetColumn .Column -}}
           {{$colName := $sideAlias.Column $map.Column -}}
           {{if .HasValue -}}
-            {{if $sideC.Nullable }}
-              {{$.Importer.Import "github.com/aarondl/opt/omitnull" -}}
-              {{$colName}}: omitnull.From({{index .Value 1}}),
-            {{else}}
-              {{$.Importer.Import "github.com/aarondl/opt/omit" -}}
-              {{$colName}}: omit.From({{index .Value 1}}),
-            {{end}}
-          {{- else -}}
+            {{$val := index .Value 1 -}}
+            {{$colName}}: &{{$.Tables.ColumnSetter $.CurrentPackage $.Importer $.Types $side.TableName .Column $val "true"}},
+          {{else}}
             {{$a := $.Aliases.Table .ExternalTable -}}
             {{$t := $.Tables.Get .ExternalTable -}}
             {{$c := $t.GetColumn .ExternalColumn -}}
-            {{$colVal := printf "%s%d.%s" $a.DownSingular $map.ExtPosition ($a.Column $map.ExternalColumn) -}}
+            {{$colVal := printf "%s%d" $a.DownSingular $map.ExtPosition -}}
             {{if $rel.NeedsMany .ExtPosition -}}
-              {{$colVal = printf "%s%d[i].%s" $a.DownPlural $map.ExtPosition ($a.Column $map.ExternalColumn) -}}
+              {{$colVal = printf "%s%d[i]" $a.DownPlural $map.ExtPosition -}}
             {{end -}}
-            {{if and $sideC.Nullable $c.Nullable -}}
-              {{$.Importer.Import "github.com/aarondl/opt/omitnull"}}
-              {{$colName}}: omitnull.FromNull({{$colVal}}),
-            {{else if $sideC.Nullable -}}
-              {{$.Importer.Import "github.com/aarondl/opt/omitnull"}}
-              {{$colName}}: omitnull.From({{$colVal}}),
-            {{else if $c.Nullable -}}
-              {{$.Importer.Import "github.com/aarondl/opt/omit"}}
-              {{$colName}}: omit.FromCond({{$colVal}}.GetOrZero(), {{$colVal}}.IsSet()),
-            {{else -}}
-              {{$.Importer.Import "github.com/aarondl/opt/omit"}}
-              {{$colName}}: omit.From({{$colVal}}),
-            {{- end}}
+            {{$colName}}: {{$.Tables.ColumnAssigner $.CurrentPackage $.Importer $.Types $.Aliases $side.TableName .ExternalTable $map.Column .ExternalColumn $colVal true}},
           {{- end}}
         {{- end}}
       {{- end}}

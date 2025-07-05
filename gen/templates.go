@@ -10,7 +10,8 @@ import (
 
 	"github.com/Masterminds/sprig/v3"
 	"github.com/stephenafamo/bob/gen/drivers"
-	"github.com/stephenafamo/bob/gen/importers"
+	"github.com/stephenafamo/bob/gen/language"
+	"github.com/stephenafamo/bob/internal"
 	"github.com/volatiletech/strmangle"
 )
 
@@ -34,52 +35,11 @@ var (
 	MySQLModelTemplates, _  = fs.Sub(mysqlTemplates, "bobgen-mysql/templates/models")
 	PSQLModelTemplates, _   = fs.Sub(psqlTemplates, "bobgen-psql/templates/models")
 	SQLiteModelTemplates, _ = fs.Sub(sqliteTemplates, "bobgen-sqlite/templates/models")
-	typesReplacer           = strings.NewReplacer(
-		" ", "_",
-		".", "_",
-		",", "_",
-		"*", "_",
-		"[", "_",
-		"]", "_",
-	)
 )
-
-type Importer map[string]struct{}
-
-// To be used inside templates to record an import.
-// Always returns an empty string
-func (i Importer) Import(pkgs ...string) string {
-	if len(pkgs) < 1 {
-		return ""
-	}
-	pkg := fmt.Sprintf("%q", pkgs[0])
-	if len(pkgs) > 1 {
-		pkg = fmt.Sprintf("%s %q", pkgs[0], pkgs[1])
-	}
-
-	i[pkg] = struct{}{}
-	return ""
-}
-
-func (i Importer) ImportList(list importers.List) string {
-	for _, p := range list {
-		i[p] = struct{}{}
-	}
-	return ""
-}
-
-func (i Importer) ToList() importers.List {
-	var list importers.List
-	for pkg := range i {
-		list = append(list, pkg)
-	}
-
-	return list
-}
 
 type TemplateData[T, C, I any] struct {
 	Dialect  string
-	Importer Importer
+	Importer language.Importer
 
 	Table         drivers.Table[C, I]
 	Tables        drivers.Tables[C, I]
@@ -95,9 +55,6 @@ type TemplateData[T, C, I any] struct {
 	PkgName string
 
 	// Control various generation features
-	AddSoftDeletes    bool
-	AddEnumTypes      bool
-	EnumNullPrefix    string
 	NoFactory         bool
 	NoTests           bool
 	NoBackReferencing bool
@@ -112,15 +69,15 @@ type TemplateData[T, C, I any] struct {
 	TagIgnore map[string]struct{}
 
 	// Supplied by the driver
-	ExtraInfo     T
-	ModelsPackage string
+	ExtraInfo T
 
-	// DriverName is the module name of the underlying `database/sql` driver
-	DriverName string
-}
+	// Package information
+	CurrentPackage string            // the current package being generated
+	OutputPackages map[string]string // map of output keys to package paths
 
-func (t *TemplateData[T, C, I]) ResetImports() {
-	t.Importer = make(Importer)
+	// Driver is the module name of the underlying `database/sql` driver
+	Driver   string
+	Language language.Language
 }
 
 func loadTemplate(tpl *template.Template, customFuncs template.FuncMap, name, content string) error {
@@ -190,7 +147,6 @@ var templateFunctions = template.FuncMap{
 	},
 	"isPrimitiveType":    isPrimitiveType,
 	"relQueryMethodName": relQueryMethodName,
-	"getType":            getType,
 }
 
 func relQueryMethodName(tAlias drivers.TableAlias, relAlias string) string {
@@ -205,20 +161,5 @@ func relQueryMethodName(tAlias drivers.TableAlias, relAlias string) string {
 }
 
 func NormalizeType(val string) string {
-	return typesReplacer.Replace(val)
-}
-
-// Gets the type for a db column. Used if you have types defined inside the
-// models dir, which needs the models prefix in the factory files.
-func getType(columnType string, typedef drivers.Type) string {
-	prefix := ""
-	if typedef.InGeneratedPackage {
-		prefix = "models."
-	}
-
-	if typedef.AliasOf != "" {
-		return prefix + typedef.AliasOf
-	}
-
-	return prefix + columnType
+	return internal.TypesReplacer.Replace(val)
 }

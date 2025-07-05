@@ -2,7 +2,12 @@ package internal
 
 import (
 	"hash/maphash"
+	"strings"
 )
+
+func Pointer[T any](val T) *T {
+	return &val
+}
 
 func ToAnySlice[T any, Ts ~[]T](slice Ts) []any {
 	ret := make([]any, len(slice))
@@ -102,12 +107,12 @@ func RemoveDuplicates[T comparable, Ts ~[]T](slice Ts) Ts {
 	return final
 }
 
-func InList[T comparable](s []T, val T) bool {
-	for _, v := range s {
-		if v == val {
-			return true
-		}
-	}
-
-	return false
-}
+//nolint:gochecknoglobals
+var TypesReplacer = strings.NewReplacer(
+	" ", "_",
+	".", "_",
+	",", "_",
+	"*", "_",
+	"[", "_",
+	"]", "_",
+)

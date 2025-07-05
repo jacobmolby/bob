@@ -19,7 +19,6 @@ import (
 	"github.com/knadh/koanf/v2"
 	"github.com/stephenafamo/bob/gen"
 	"github.com/stephenafamo/bob/gen/drivers"
-	"github.com/stephenafamo/bob/gen/importers"
 )
 
 const DefaultConfigPath = "./bobgen.yaml"
@@ -30,6 +29,27 @@ func Version() string {
 	}
 
 	return ""
+}
+
+type Config struct {
+	// Which `database` driver to use (the full module name)
+	Driver string `yaml:"driver"`
+	// The database connection string
+	Dsn string
+	// List of tables that will be included. Others are ignored
+	Only map[string][]string
+	// Folders containing query files
+	Queries []string `yaml:"queries"`
+	// List of tables that will be should be ignored. Others are included
+	Except map[string][]string
+
+	//-------
+
+	// The name of the folder to output the models package to
+	Output string
+	// The name you wish to assign to your generated models package
+	Pkgname   string
+	NoFactory bool `yaml:"no_factory"`
 }
 
 type Templates struct {
@@ -53,10 +73,11 @@ func DefaultOutputs(destination, pkgname string, noFactory bool, templates *Temp
 
 	outputs := []*gen.Output{
 		{
-			Key:       "models",
-			OutFolder: destination,
-			PkgName:   pkgname,
-			Templates: append(templates.Models, gen.ModelTemplates),
+			Key:                     "models",
+			OutFolder:               destination,
+			PkgName:                 pkgname,
+			SeparatePackageForTests: true,
+			Templates:               append(templates.Models, gen.ModelTemplates),
 		},
 		{
 			Key:       "queries",
@@ -105,7 +126,7 @@ func GetConfigFromProvider[ConstraintExtra, DriverConfig any](provider koanf.Pro
 		"struct_tag_casing": "snake",
 		"relation_tag":      "-",
 		"generator":         fmt.Sprintf("BobGen %s %s", driverConfigKey, Version()),
-	}, "."), nil)
+	}, ""), nil)
 	if err != nil {
 		return config, driverConfig, err
 	}
@@ -142,251 +163,13 @@ func GetConfigFromProvider[ConstraintExtra, DriverConfig any](provider koanf.Pro
 }
 
 func EnumType(types drivers.Types, enum string) string {
-	types[enum] = drivers.Type{
+	types.Register(enum, drivers.Type{
 		NoRandomizationTest: true, // enums are often not random enough
 		RandomExpr: fmt.Sprintf(`all := all%s()
             return all[f.IntBetween(0, len(all)-1)]`, enum),
-	}
+	})
 
 	return enum
-}
-
-func Types() drivers.Types {
-	return drivers.Types{
-		"bool": {
-			NoRandomizationTest: true,
-			RandomExpr:          `return f.Bool()`,
-		},
-		"int": {
-			RandomExpr: `return f.Int()`,
-		},
-		"int8": {
-			RandomExpr: `return f.Int8()`,
-		},
-		"int16": {
-			RandomExpr: `return f.Int16()`,
-		},
-		"int32": {
-			RandomExpr: `return f.Int32()`,
-		},
-		"int64": {
-			RandomExpr: `return f.Int64()`,
-		},
-		"uint": {
-			RandomExpr: `return f.UInt()`,
-		},
-		"uint8": {
-			RandomExpr: `return f.UInt8()`,
-		},
-		"uint16": {
-			RandomExpr: `return f.UInt16()`,
-		},
-		"uint32": {
-			RandomExpr: `return f.UInt32()`,
-		},
-		"uint64": {
-			RandomExpr: `return f.UInt64()`,
-		},
-		"float32": {
-			RandomExpr: `return f.Float32(10, -1_000_000, 1_000_000)`,
-		},
-		"float64": {
-			RandomExpr: `return f.Float64(10, -1_000_000, 1_000_000)`,
-		},
-		"string": {
-			RandomExpr:        `return strings.Join(f.Lorem().Words(f.IntBetween(1, 5)), " ")`,
-			RandomExprImports: importers.List{`"strings"`},
-		},
-		"[]byte": {
-			DependsOn:           []string{"string"},
-			RandomExpr:          `return []byte(random_string(f))`,
-			CompareExpr:         `bytes.Equal(AAA, BBB)`,
-			CompareExprImports:  importers.List{`"bytes"`},
-			NoScannerValuerTest: true,
-		},
-		"time.Time": {
-			Imports: importers.List{`"time"`},
-			RandomExpr: `year := time.Hour * 24 * 365
-                min := time.Now().Add(-year)
-                max := time.Now().Add(year)
-                return f.Time().TimeBetween(min, max)`,
-			CompareExpr:         `AAA.Equal(BBB)`,
-			NoScannerValuerTest: true,
-		},
-		"types.Text[netip.Addr, *netip.Addr]": {
-			Imports: importers.List{
-				`"net/netip"`,
-				`"github.com/stephenafamo/bob/types"`,
-			},
-			RandomExpr: `var addr [4]byte
-                rand.Read(addr[:])
-                ipAddr := netip.AddrFrom4(addr)
-                return types.Text[netip.Addr, *netip.Addr]{Val: ipAddr}`,
-			RandomExprImports: importers.List{`"crypto/rand"`},
-		},
-		"pgtypes.Inet": {
-			Imports: importers.List{
-				`"github.com/stephenafamo/bob/types/pgtypes"`,
-			},
-			RandomExpr: `var addr [4]byte
-                rand.Read(addr[:])
-                ipAddr := netip.AddrFrom4(addr)
-                ipPrefix := netip.PrefixFrom(ipAddr, f.IntBetween(0, ipAddr.BitLen()))
-                return pgtypes.Inet{Prefix: ipPrefix}`,
-			RandomExprImports: importers.List{`"crypto/rand"`, `"net/netip"`},
-		},
-		"pgtypes.Macaddr": {
-			Imports: importers.List{`"github.com/stephenafamo/bob/types/pgtypes"`},
-			RandomExpr: `addr, _ := net.ParseMAC(f.Internet().MacAddress())
-                return pgtypes.Macaddr{Addr: addr}`,
-			RandomExprImports:  importers.List{`"net"`},
-			CompareExpr:        `slices.Equal(AAA.Addr, BBB.Addr)`,
-			CompareExprImports: importers.List{`"slices"`},
-		},
-		"pq.BoolArray": {
-			Imports: importers.List{`"github.com/lib/pq"`},
-			RandomExpr: `arr := make(pq.BoolArray, f.IntBetween(1, 5))
-                for i := range arr {
-                    arr[i] = f.Bool()
-                }
-                return arr`,
-			NoRandomizationTest: true,
-		},
-		"pq.Int64Array": {
-			Imports: importers.List{`"github.com/lib/pq"`},
-			RandomExpr: `arr := make(pq.Int64Array, f.IntBetween(1, 5))
-                for i := range arr {
-                    arr[i] = f.Int64()
-                }
-                return arr`,
-			CompareExpr:        `slices.Equal(AAA, BBB)`,
-			CompareExprImports: importers.List{`"slices"`},
-		},
-		"pq.ByteaArray": {
-			DependsOn: []string{"[]byte"},
-			Imports:   importers.List{`"github.com/lib/pq"`},
-			RandomExpr: `arr := make(pq.ByteaArray, f.IntBetween(1, 5))
-                for i := range arr {
-                    arr[i] = random___byte(f)
-                }
-                return arr`,
-			CompareExpr: `slices.EqualFunc(AAA, BBB, func(a, b []byte) bool {
-                return bytes.Equal(a, b)
-            })`,
-			CompareExprImports: importers.List{`"slices"`, `"bytes"`},
-		},
-		"pq.StringArray": {
-			DependsOn: []string{"string"},
-			Imports:   importers.List{`"github.com/lib/pq"`},
-			RandomExpr: `arr := make(pq.StringArray, f.IntBetween(1, 5))
-                for i := range arr {
-                    arr[i] = random_string(f)
-                }
-                return arr`,
-			CompareExpr:        `slices.Equal(AAA, BBB)`,
-			CompareExprImports: importers.List{`"slices"`},
-		},
-		"pq.Float64Array": {
-			Imports: importers.List{`"github.com/lib/pq"`},
-			RandomExpr: `arr := make(pq.Float64Array, f.IntBetween(1, 5))
-                for i := range arr {
-                    arr[i] = f.Float64(10, -1_000_000, 1_000_000)
-                }
-                return arr`,
-			CompareExpr:        `slices.Equal(AAA, BBB)`,
-			CompareExprImports: importers.List{`"slices"`},
-		},
-		"pgeo.Box": {
-			Imports:    importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr: `return pgeo.NewRandBox()`,
-		},
-		"pgeo.Circle": {
-			Imports:    importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr: `return pgeo.NewRandCircle()`,
-		},
-		"pgeo.Line": {
-			Imports:    importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr: `return pgeo.NewRandLine()`,
-		},
-		"pgeo.Lseg": {
-			Imports:    importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr: `return pgeo.NewRandLseg()`,
-		},
-		"pgeo.Path": {
-			Imports:     importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr:  `return pgeo.NewRandPath()`,
-			CompareExpr: `AAA.Closed == BBB.Closed && slices.Equal(AAA.Points, BBB.Points)`,
-		},
-		"pgeo.Point": {
-			Imports:    importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr: `return pgeo.NewRandPoint()`,
-		},
-		"pgeo.Polygon": {
-			Imports:            importers.List{`"github.com/saulortega/pgeo"`},
-			RandomExpr:         `return pgeo.NewRandPolygon()`,
-			CompareExpr:        `slices.Equal(AAA, BBB)`,
-			CompareExprImports: importers.List{`"slices"`},
-		},
-		"decimal.Decimal": {
-			Imports:     importers.List{`"github.com/shopspring/decimal"`},
-			RandomExpr:  `return decimal.New(f.Int64Between(0, 1000), 0)`,
-			CompareExpr: `AAA.Equal(BBB)`,
-		},
-		"pgtypes.LSN": {
-			Imports:    importers.List{`"github.com/stephenafamo/bob/types/pgtypes"`},
-			RandomExpr: `return pgtypes.LSN(f.UInt64())`,
-		},
-		"pgtypes.TxIDSnapshot": {
-			Imports: importers.List{`"github.com/stephenafamo/bob/types/pgtypes"`},
-			RandomExpr: `active := make([]string, f.IntBetween(1, 5))
-                for i := range active {
-                    active[i] = strconv.FormatUint(f.UInt64(), 10)
-                }
-                return pgtypes.TxIDSnapshot{
-                    Min: strconv.FormatUint(f.UInt64(), 10),
-                    Max: strconv.FormatUint(f.UInt64(), 10),
-                    Active: active,
-                }`,
-			RandomExprImports:  importers.List{`"strconv"`},
-			CompareExpr:        `AAA.Min == BBB.Min && AAA.Max == BBB.Max && slices.Equal(AAA.Active, BBB.Active)`,
-			CompareExprImports: importers.List{`"slices"`},
-		},
-		"pgtypes.HStore": {
-			DependsOn: []string{"string"},
-			Imports:   importers.List{`"github.com/stephenafamo/bob/types/pgtypes"`},
-			RandomExpr: `hs := make(pgtypes.HStore)
-                for i := 0; i < f.IntBetween(1, 5); i++ {
-                    hs[random_string(f)] = null.FromCond(random_string(f), f.Bool())
-                }
-                return hs`,
-		},
-		"types.JSON[json.RawMessage]": {
-			Imports: importers.List{
-				`"encoding/json"`,
-				`"github.com/stephenafamo/bob/types"`,
-			},
-			RandomExpr: `s := &bytes.Buffer{}
-                s.WriteRune('{')
-                for i := 0; i < f.IntBetween(1, 5); i++ {
-                    if i > 0 {
-                        fmt.Fprint(s, ", ")
-                    }
-                    fmt.Fprintf(s, "%q:%q", f.Lorem().Word(), f.Lorem().Word())
-                }
-                s.WriteRune('}')
-                return types.NewJSON[json.RawMessage](s.Bytes())`,
-			RandomExprImports:  importers.List{`"fmt"`, `"bytes"`},
-			CompareExpr:        `bytes.Equal(AAA.Val, BBB.Val)`,
-			CompareExprImports: importers.List{`"bytes"`},
-		},
-		"xml": {
-			AliasOf:   "string",
-			DependsOn: []string{"string"},
-			RandomExpr: `tag := f.Lorem().Word()
-      return fmt.Sprintf("<%s>%s</%s>", tag, f.Lorem().Word(), tag)`,
-			RandomExprImports: importers.List{`"fmt"`},
-		},
-	}
 }
 
 func GetFreePort() (int, error) {
@@ -404,29 +187,26 @@ func GetFreePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-func Migrate(ctx context.Context, db *sql.DB, dir fs.FS) error {
-	err := fs.WalkDir(dir, ".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
+func Migrate(ctx context.Context, db *sql.DB, dir fs.FS, pattern string) error {
+	if dir == nil {
+		dir = os.DirFS(".")
+	}
 
-		content, err := fs.ReadFile(dir, path)
-		if err != nil {
-			return fmt.Errorf("reading %s: %w", path, err)
-		}
-
-		fmt.Printf("migrating %s...\n", path)
-		if _, err = db.ExecContext(ctx, string(content)); err != nil {
-			return fmt.Errorf("migrating %s: %w", path, err)
-		}
-
-		return nil
-	})
+	matchedFiles, err := fs.Glob(dir, pattern)
 	if err != nil {
-		return err
+		return fmt.Errorf("globbing %s: %w", pattern, err)
+	}
+
+	for _, filePath := range matchedFiles {
+		content, err := fs.ReadFile(dir, filePath)
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", filePath, err)
+		}
+
+		fmt.Printf("migrating %s...\n", filePath)
+		if _, err = db.ExecContext(ctx, string(content)); err != nil {
+			return fmt.Errorf("migrating %s: %w", filePath, err)
+		}
 	}
 
 	fmt.Printf("migrations finished\n")

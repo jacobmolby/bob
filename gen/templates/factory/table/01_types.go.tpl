@@ -1,22 +1,23 @@
-{{$.Importer.Import "models" $.ModelsPackage}}
+{{$.Importer.Import "context"}}
+{{$.Importer.Import "models" (index $.OutputPackages "models") }}
 {{$table := .Table}}
 {{$tAlias := .Aliases.Table $table.Key -}}
 
 type {{$tAlias.UpSingular}}Mod interface {
-    Apply(*{{$tAlias.UpSingular}}Template)
+    Apply(context.Context, *{{$tAlias.UpSingular}}Template)
 }
 
-type {{$tAlias.UpSingular}}ModFunc func(*{{$tAlias.UpSingular}}Template)
+type {{$tAlias.UpSingular}}ModFunc func(context.Context, *{{$tAlias.UpSingular}}Template)
 
-func (f {{$tAlias.UpSingular}}ModFunc) Apply(n *{{$tAlias.UpSingular}}Template) {
-    f(n)
+func (f {{$tAlias.UpSingular}}ModFunc) Apply(ctx context.Context, n *{{$tAlias.UpSingular}}Template) {
+    f(ctx, n)
 }
 
 type {{$tAlias.UpSingular}}ModSlice []{{$tAlias.UpSingular}}Mod
 
-func (mods {{$tAlias.UpSingular}}ModSlice) Apply(n *{{$tAlias.UpSingular}}Template) {
+func (mods {{$tAlias.UpSingular}}ModSlice) Apply(ctx context.Context, n *{{$tAlias.UpSingular}}Template) {
     for _, f := range mods {
-         f.Apply(n)
+         f.Apply(ctx, n)
     }
 }
 
@@ -24,14 +25,8 @@ func (mods {{$tAlias.UpSingular}}ModSlice) Apply(n *{{$tAlias.UpSingular}}Templa
 // all columns are optional and should be set by mods
 type {{$tAlias.UpSingular}}Template struct {
     {{- range $column := $table.Columns -}}
-        {{- $typDef :=  index $.Types $column.Type -}}
-        {{- $colTyp := getType $column.Type $typDef -}}
-        {{- $.Importer.ImportList $typDef.Imports -}}
         {{- $colAlias := $tAlias.Column $column.Name -}}
-        {{- if $column.Nullable -}}
-            {{- $.Importer.Import "github.com/aarondl/opt/null" -}}
-            {{- $colTyp = printf "null.Val[%s]" $colTyp -}}
-        {{- end -}}
+        {{- $colTyp := $.Types.GetNullable $.CurrentPackage $.Importer $column.Type $column.Nullable -}}
         {{$colAlias}} func() {{$colTyp}}
     {{end -}}
 
@@ -71,36 +66,8 @@ type {{$tAlias.DownSingular}}R{{$relAlias}}R struct{
 {{end}}
 
 // Apply mods to the {{$tAlias.UpSingular}}Template
-func (o *{{$tAlias.UpSingular}}Template) Apply(mods ...{{$tAlias.UpSingular}}Mod) {
+func (o *{{$tAlias.UpSingular}}Template) Apply(ctx context.Context, mods ...{{$tAlias.UpSingular}}Mod) {
   for _, mod := range mods {
-        mod.Apply(o)
+        mod.Apply(ctx, o)
     }
 }
-
-// toModel returns an *models.{{$tAlias.UpSingular}}
-// this does nothing with the relationship templates
-func (o {{$tAlias.UpSingular}}Template) toModel() (*models.{{$tAlias.UpSingular}}) {
-    m := &models.{{$tAlias.UpSingular}}{}
-
-    {{range $column := $table.Columns -}}
-    {{$colAlias := $tAlias.Column $column.Name -}}
-        if o.{{$colAlias}} != nil {
-            m.{{$colAlias}} = o.{{$colAlias}}()
-        }
-    {{end}}
-
-    return m
-}
-
-// toModels returns an models.{{$tAlias.UpSingular}}Slice
-// this does nothing with the relationship templates
-func (o {{$tAlias.UpSingular}}Template) toModels(number int) (models.{{$tAlias.UpSingular}}Slice) {
-    m := make(models.{{$tAlias.UpSingular}}Slice, number)
-
-    for i := range m {
-      m[i] = o.toModel()
-    }
-
-    return m
-}
-

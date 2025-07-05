@@ -6,6 +6,15 @@ import (
 
 // Config for the running of the commands
 type Config[ConstraintExtra any] struct {
+	// System to use to create null and optional types
+	// available options are:
+	// - "github.com/aarondl/opt" (default)
+	//    * Uses null.Val[T] for optional values
+	//    * Uses null.Null[T] for nullable values
+	// - "database/sql"
+	//    * Uses pointers for optional values
+	//	  * Uses sql.Null[T] for nullable values
+	TypeSystem string `yaml:"type_system"`
 	// Struct tags to generate
 	Tags []string `yaml:"tags"`
 	// Disable generating factories for models
@@ -14,8 +23,6 @@ type Config[ConstraintExtra any] struct {
 	NoTests bool `yaml:"no_tests"`
 	// Disable back referencing in the loaded relationship structs
 	NoBackReferencing bool `yaml:"no_back_referencing"`
-	// Delete the output folder (rm -rf) before generation to ensure sanity
-	Wipe bool `yaml:"wipe"`
 	// Decides the casing for go structure tag names. camel, title or snake (default snake)
 	StructTagCasing string `yaml:"struct_tag_casing"`
 	// Relationship struct tag name
@@ -23,7 +30,7 @@ type Config[ConstraintExtra any] struct {
 	// List of column names that should have tags values set to '-' (ignored during parsing)
 	TagIgnore []string `yaml:"tag_ignore"`
 
-	Types         drivers.Types                `yaml:"types"`         // register custom types
+	Types         map[string]drivers.Type      `yaml:"types"`         // register custom types
 	Aliases       drivers.Aliases              `yaml:"aliases"`       // customize aliases
 	Constraints   Constraints[ConstraintExtra] `yaml:"constraints"`   // define additional constraints
 	Relationships Relationships                `yaml:"relationships"` // define additional relationships

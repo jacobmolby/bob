@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	helpers "github.com/stephenafamo/bob/gen/bobgen-helpers"
+	"github.com/stephenafamo/bob/gen/bobgen-mysql/driver/parser"
 	"github.com/stephenafamo/bob/gen/drivers"
 	"github.com/stephenafamo/scan"
 	"github.com/stephenafamo/scan/stdscan"
@@ -25,22 +26,9 @@ type (
 )
 
 type Config struct {
-	// The database connection string
-	Dsn string
-	// List of tables that will be included. Others are ignored
-	Only map[string][]string
-	// List of tables that will be should be ignored. Others are included
-	Except map[string][]string
+	helpers.Config `yaml:",squash"`
 	// How many tables to fetch in parallel
 	Concurrency int
-
-	//-------
-
-	// The name of the folder to output the models package to
-	Output string
-	// The name you wish to assign to your generated models package
-	Pkgname   string
-	NoFactory bool `yaml:"no_factory"`
 }
 
 func New(config Config) Interface {
@@ -93,7 +81,7 @@ func (d *driver) Assemble(ctx context.Context) (*DBInfo, error) {
 	}
 	defer d.conn.Close()
 
-	dbinfo = &DBInfo{DriverName: "github.com/go-sql-driver/mysql"}
+	dbinfo = &DBInfo{Driver: "github.com/go-sql-driver/mysql"}
 
 	dbinfo.Tables, err = drivers.BuildDBInfo[any](ctx, d, d.config.Concurrency, d.config.Only, d.config.Except)
 	if err != nil {
@@ -104,6 +92,11 @@ func (d *driver) Assemble(ctx context.Context) (*DBInfo, error) {
 	sort.Slice(dbinfo.Enums, func(i, j int) bool {
 		return dbinfo.Enums[i].Type < dbinfo.Enums[j].Type
 	})
+
+	dbinfo.QueryFolders, err = parser.New(dbinfo.Tables).ParseFolders(ctx, d.config.Queries...)
+	if err != nil {
+		return nil, fmt.Errorf("parse query folders: %w", err)
+	}
 
 	return dbinfo, err
 }
@@ -192,7 +185,7 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
 
 	query += ` order by c.ordinal_position;`
 
-	rows, err := d.conn.Query(query, args...)
+	rows, err := d.conn.QueryContext(ctx, query, args...)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -234,7 +227,7 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
 		}
 
 		if !rgxEnum.MatchString(colFullType) {
-			column = d.translateColumnType(column, colFullType)
+			column.Type, column.TypeLimits = parser.TranslateColumnType(colFullType)
 		} else {
 			enumTyp := strmangle.TitleCase(tableName + "_" + colName)
 
@@ -258,63 +251,6 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
 func parseEnumVals(s string) []string {
 	s = s[6 : len(s)-2]
 	return strings.Split(s, "','")
-}
-
-// translateTableColumnType converts mysql database types to Go types, for example
-// "varchar" to "string" and "bigint" to "int64". It returns this parsed data
-// as a Column object.
-func (*driver) translateColumnType(c drivers.Column, fullType string) drivers.Column {
-	unsigned := strings.HasSuffix(fullType, " unsigned")
-	switch c.DBType {
-	case "tinyint":
-		if unsigned {
-			c.Type = "uint8"
-		} else {
-			c.Type = "int8"
-		}
-	case "smallint":
-		if unsigned {
-			c.Type = "uint16"
-		} else {
-			c.Type = "int16"
-		}
-	case "mediumint":
-		if unsigned {
-			c.Type = "uint32"
-		} else {
-			c.Type = "int32"
-		}
-	case "int", "integer":
-		if unsigned {
-			c.Type = "uint32"
-		} else {
-			c.Type = "int32"
-		}
-	case "bigint":
-		if unsigned {
-			c.Type = "uint64"
-		} else {
-			c.Type = "int64"
-		}
-	case "float":
-		c.Type = "float32"
-	case "double", "double precision", "real":
-		c.Type = "float64"
-	case "boolean", "bool":
-		c.Type = "bool"
-	case "date", "datetime", "timestamp":
-		c.Type = "time.Time"
-	case "binary", "varbinary", "tinyblob", "blob", "mediumblob", "longblob":
-		c.Type = "[]byte"
-	case "numeric", "decimal", "dec", "fixed":
-		c.Type = "decimal.Decimal"
-	case "json":
-		c.Type = "types.JSON[json.RawMessage]"
-	default:
-		c.Type = "string"
-	}
-
-	return c
 }
 
 func (d *driver) Types() drivers.Types {

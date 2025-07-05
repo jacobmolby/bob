@@ -12,46 +12,36 @@ import (
 	"github.com/lib/pq"
 	"github.com/stephenafamo/bob/gen"
 	helpers "github.com/stephenafamo/bob/gen/bobgen-helpers"
+	mysqlDriver "github.com/stephenafamo/bob/gen/bobgen-mysql/driver"
 	psqlDriver "github.com/stephenafamo/bob/gen/bobgen-psql/driver"
 	sqliteDriver "github.com/stephenafamo/bob/gen/bobgen-sqlite/driver"
 	"github.com/stephenafamo/bob/gen/drivers"
+	"github.com/testcontainers/testcontainers-go"
+	mysqltest "github.com/testcontainers/testcontainers-go/modules/mysql"
 )
 
 type Config struct {
+	helpers.Config `yaml:",squash"`
+
 	// What dialect to generate with
 	// psql | mysql | sqlite
 	Dialect string
-	// Where the SQL files are
-	Dir string
-	// Folders containing query files
-	Queries []string `yaml:"queries"`
+	// Glob pattern to match migration files
+	Pattern string
 	// The database schemas to generate models for
 	Schemas []string
 	// The name of this schema will not be included in the generated models
 	// a context value can then be used to set the schema at runtime
 	// useful for multi-tenant setups
 	SharedSchema string `yaml:"shared_schema"`
-	// List of tables that will be included. Others are ignored
-	Only map[string][]string
-	// List of tables that will be should be ignored. Others are included
-	Except map[string][]string
 	// How many tables to fetch in parallel
 	Concurrency int
 	// Which UUID package to use (gofrs or google)
 	UUIDPkg string `yaml:"uuid_pkg"`
-	// Which `database/sql` driver to use (the full module name)
-	DriverName string `yaml:"driver_name"`
-
-	Output    string
-	Pkgname   string
-	NoFactory bool `yaml:"no_factory"`
-
-	fs fs.FS
+	fs      fs.FS
 }
 
 func RunPostgres(ctx context.Context, state *gen.State[any], config Config) error {
-	config.fs = os.DirFS(config.Dir)
-
 	d, err := getPsqlDriver(ctx, config)
 	if err != nil {
 		return fmt.Errorf("getting psql driver: %w", err)
@@ -88,32 +78,74 @@ func getPsqlDriver(ctx context.Context, config Config) (psqlDriver.Interface, er
 	}
 	defer db.Close()
 
-	if err := helpers.Migrate(ctx, db, config.fs); err != nil {
+	if err := helpers.Migrate(ctx, db, config.fs, config.Pattern); err != nil {
 		return nil, fmt.Errorf("migrating: %w", err)
 	}
 	db.Close() // close early
 
+	config.Dsn = dsn
 	d := wrapDriver(ctx, psqlDriver.New(psqlDriver.Config{
-		Dsn: dsn,
-
+		Config:       config.Config,
 		Schemas:      pq.StringArray(config.Schemas),
 		SharedSchema: config.SharedSchema,
-		Only:         config.Only,
-		Except:       config.Except,
 		Concurrency:  config.Concurrency,
 		UUIDPkg:      config.UUIDPkg,
-		DriverName:   config.DriverName,
-		Output:       config.Output,
-		Pkgname:      config.Pkgname,
-		NoFactory:    config.NoFactory,
+	}))
+
+	return d, nil
+}
+
+func RunMySQL(ctx context.Context, state *gen.State[any], config Config) error {
+	d, err := getMySQLDriver(ctx, config)
+	if err != nil {
+		return fmt.Errorf("getting mysql driver: %w", err)
+	}
+
+	return gen.Run(ctx, state, d)
+}
+
+func getMySQLDriver(ctx context.Context, config Config) (mysqlDriver.Interface, error) {
+	mysqlContainer, err := mysqltest.Run(ctx,
+		"mysql:8.0.35",
+		mysqltest.WithDatabase("bobgen"),
+		mysqltest.WithUsername("root"),
+		mysqltest.WithPassword("password"),
+	)
+	defer func() {
+		if err := testcontainers.TerminateContainer(mysqlContainer); err != nil {
+			fmt.Printf("failed to terminate MySQL container: %v\n", err)
+		}
+	}()
+	if err != nil {
+		return nil, fmt.Errorf("failed to start container: %w", err)
+	}
+
+	dsn, err := mysqlContainer.ConnectionString(ctx, "tls=skip-verify", "multiStatements=true", "parseTime=true")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection string: %w", err)
+	}
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer db.Close()
+
+	if err := helpers.Migrate(ctx, db, config.fs, config.Pattern); err != nil {
+		return nil, fmt.Errorf("migrating: %w", err)
+	}
+	db.Close() // close early
+
+	config.Dsn = dsn
+	d := wrapDriver(ctx, mysqlDriver.New(mysqlDriver.Config{
+		Config:      config.Config,
+		Concurrency: config.Concurrency,
 	}))
 
 	return d, nil
 }
 
 func RunSQLite(ctx context.Context, state *gen.State[any], config Config) error {
-	config.fs = os.DirFS(config.Dir)
-
 	d, err := getSQLiteDriver(ctx, config)
 	if err != nil {
 		return fmt.Errorf("getting sqlite driver: %w", err)
@@ -152,23 +184,16 @@ func getSQLiteDriver(ctx context.Context, config Config) (sqliteDriver.Interface
 		}
 	}
 
-	if err := helpers.Migrate(ctx, db, config.fs); err != nil {
+	if err := helpers.Migrate(ctx, db, config.fs, config.Pattern); err != nil {
 		return nil, fmt.Errorf("migrating: %w", err)
 	}
 	db.Close() // close early
 
+	config.Dsn = "file:" + tmp.Name()
 	d := sqliteDriver.New(sqliteDriver.Config{
-		DSN:        tmp.Name(),
-		Attach:     attach,
-		Queries:    config.Queries,
-		DriverName: config.DriverName,
-
+		Config:       config.Config,
+		Attach:       attach,
 		SharedSchema: config.SharedSchema,
-		Only:         config.Only,
-		Except:       config.Except,
-		Output:       config.Output,
-		Pkgname:      config.Pkgname,
-		NoFactory:    config.NoFactory,
 	})
 
 	return d, nil

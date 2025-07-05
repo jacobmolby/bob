@@ -3,13 +3,14 @@ package mysql
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"reflect"
 	"testing"
 
-	"github.com/aarondl/opt/omit"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stephenafamo/bob"
 	"github.com/stephenafamo/bob/dialect/mysql/dialect"
+	"github.com/stephenafamo/bob/internal"
 	"github.com/stephenafamo/bob/orm"
 )
 
@@ -19,14 +20,10 @@ type WithAutoIncr struct {
 	AuthorID int    `db:"author_id,autoincr"`
 }
 
-func (w *WithAutoIncr) PrimaryKeyVals() bob.Expression {
-	return Arg(w.ID)
-}
-
 type OptionalWithAutoIncr struct {
-	ID       omit.Val[int]    `db:"id,pk"`
-	Title    omit.Val[string] `db:"title"`
-	AuthorID omit.Val[int]    `db:"author_id,autoincr"`
+	ID       *int    `db:"id,pk"`
+	Title    *string `db:"title"`
+	AuthorID *int    `db:"author_id,autoincr"`
 
 	orm.Setter[*WithAutoIncr, *dialect.InsertQuery, *dialect.UpdateQuery]
 }
@@ -37,14 +34,10 @@ type WithUnique struct {
 	AuthorID int    `db:"author_id"`
 }
 
-func (w *WithUnique) PrimaryKeyVals() bob.Expression {
-	return Arg(w.ID)
-}
-
 type OptionalWithUnique struct {
-	ID       omit.Val[int]    `db:"id,pk"`
-	Title    omit.Val[string] `db:"title"`
-	AuthorID omit.Val[int]    `db:"author_id"`
+	ID       *int    `db:"id,pk"`
+	Title    *string `db:"title"`
+	AuthorID *int    `db:"author_id"`
 
 	orm.Setter[*WithUnique, *dialect.InsertQuery, *dialect.UpdateQuery]
 }
@@ -67,12 +60,12 @@ func TestNewTable(t *testing.T) {
 		t.Fatalf("diff: %s", diff)
 	}
 
-	if table1.unretrievable {
-		t.Fatalf("table1 marked as unretrievable")
+	if err := table1.Insert().retrievable(); err != nil {
+		t.Fatalf("table1 marked as unretrievable: %v", err)
 	}
 
-	if table2.unretrievable {
-		t.Fatalf("table2 marked as unretrievable")
+	if err := table2.Insert().retrievable(); err != nil {
+		t.Fatalf("table2 marked as unretrievable: %v", err)
 	}
 }
 
@@ -86,29 +79,29 @@ func TestUniqueSetRow(t *testing.T) {
 			row: nil,
 		},
 		"none fully set": {
-			row: &OptionalWithUnique{Title: omit.From("a title")},
+			row: &OptionalWithUnique{Title: internal.Pointer("a title")},
 		},
 		"id set": {
-			row:  &OptionalWithUnique{ID: omit.From(10)},
+			row:  &OptionalWithUnique{ID: internal.Pointer(10)},
 			cols: []string{"id"},
-			args: []bob.Expression{Arg(omit.From(10))},
+			args: []bob.Expression{Arg(internal.Pointer(10))},
 		},
 		"title/author set": {
 			row: &OptionalWithUnique{
-				Title:    omit.From("a title"),
-				AuthorID: omit.From(1),
+				Title:    internal.Pointer("a title"),
+				AuthorID: internal.Pointer(1),
 			},
 			cols: []string{"title", "author_id"},
-			args: []bob.Expression{Arg(omit.From("a title")), Arg(omit.From(1))},
+			args: []bob.Expression{Arg(internal.Pointer("a title")), Arg(internal.Pointer(1))},
 		},
 		"all set": {
 			row: &OptionalWithUnique{
-				ID:       omit.From(10),
-				Title:    omit.From("a title"),
-				AuthorID: omit.From(1),
+				ID:       internal.Pointer(10),
+				Title:    internal.Pointer("a title"),
+				AuthorID: internal.Pointer(1),
 			},
 			cols: []string{"id"},
-			args: []bob.Expression{Arg(omit.From(10))},
+			args: []bob.Expression{Arg(internal.Pointer(10))},
 		},
 	}
 
@@ -117,20 +110,20 @@ func TestUniqueSetRow(t *testing.T) {
 			rowExpr := make([]bob.Expression, 3)
 
 			if tc.row != nil {
-				if tc.row.ID.IsSet() {
+				if tc.row.ID != nil {
 					rowExpr[0] = Arg(tc.row.ID)
 				}
 
-				if tc.row.Title.IsSet() {
+				if tc.row.Title != nil {
 					rowExpr[1] = Arg(tc.row.Title)
 				}
 
-				if tc.row.AuthorID.IsSet() {
+				if tc.row.AuthorID != nil {
 					rowExpr[2] = Arg(tc.row.AuthorID)
 				}
 			}
 
-			cols, args := table2.uniqueSet(bytes.NewBuffer(nil), rowExpr)
+			cols, args := table2.Insert().uniqueSet(bytes.NewBuffer(nil), rowExpr)
 
 			if diff := cmp.Diff(toQuote(tc.cols), table2.uniqueColNames(cols)); diff != "" {
 				t.Errorf("cols: %s", diff)
@@ -186,4 +179,74 @@ func compareArg(a, b bob.Expression) bool {
 	}
 
 	return true
+}
+
+func TestIsDefaultOrNull(t *testing.T) {
+	cases := map[string]struct {
+		value  bob.Expression // value to check
+		expect bool
+	}{
+		"nil": {
+			value:  nil,
+			expect: true,
+		},
+		"nil Arg": {
+			value:  Arg(nil),
+			expect: true,
+		},
+		"sql.NullString": {
+			value:  Arg(sql.NullString{}),
+			expect: true,
+		},
+		"sql.NullStringTrue": {
+			value:  Arg(sql.NullString{Valid: true}),
+			expect: false,
+		},
+		"sql.Null[string]": {
+			value:  Arg(sql.Null[string]{}),
+			expect: true,
+		},
+		"sql.Null[string]True": {
+			value:  Arg(sql.Null[string]{Valid: true}),
+			expect: false,
+		},
+		"null expression": {
+			value:  Raw("null"),
+			expect: true,
+		},
+		"null expression capital": {
+			value:  Raw("NULL"),
+			expect: true,
+		},
+		"default expression": {
+			value:  Raw("DEFAULT"),
+			expect: true,
+		},
+		"int zero": {
+			value:  Arg(0),
+			expect: false,
+		},
+		"int non-zero": {
+			value:  Arg(1),
+			expect: false,
+		},
+		"string empty": {
+			value:  Arg(""),
+			expect: false,
+		},
+		"string non-empty": {
+			value:  Arg("hello"),
+			expect: false,
+		},
+	}
+
+	b := &bytes.Buffer{}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := isDefaultOrNull(b, tc.value); got != tc.expect {
+				t.Errorf("expected %v, got %v", tc.expect, got)
+			}
+		})
+	}
 }

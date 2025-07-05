@@ -15,14 +15,29 @@ type DeleteQuery struct {
 
 	clause.With
 	modifiers[string]
-	Tables []clause.Table
-	clause.From
+	Tables []clause.TableRef
+
+	// This is needed since Paritions come AFTER the table alias in DELETE statements
+	// In other statements, they come before the table alias
+	Partitions []string
+
+	clause.TableRef
 	clause.Where
 	clause.OrderBy
 	clause.Limit
 	bob.Load
 	bob.EmbeddedHook
 	bob.ContextualModdable[*DeleteQuery]
+}
+
+func (d *DeleteQuery) AppendTable(expr bob.Expression) {
+	d.Tables = append(d.Tables, clause.TableRef{
+		Expression: expr,
+	})
+}
+
+func (d *DeleteQuery) AppendPartition(partitions ...string) {
+	d.Partitions = append(d.Partitions, partitions...)
 }
 
 func (d DeleteQuery) WriteSQL(ctx context.Context, w io.Writer, dl bob.Dialect, start int) ([]any, error) {
@@ -62,8 +77,13 @@ func (d DeleteQuery) WriteSQL(ctx context.Context, w io.Writer, dl bob.Dialect, 
 	}
 	args = append(args, tableArgs...)
 
-	usingArgs, err := bob.ExpressIf(ctx, w, dl, start+len(args), d.From,
-		d.From.Table != nil, "\nUSING ", "")
+	_, err = bob.ExpressSlice(ctx, w, dl, start, d.Partitions, " PARTITION (", ", ", ")")
+	if err != nil {
+		return nil, err
+	}
+
+	usingArgs, err := bob.ExpressIf(ctx, w, dl, start+len(args), d.TableRef,
+		d.TableRef.Expression != nil, "\nUSING ", "")
 	if err != nil {
 		return nil, err
 	}

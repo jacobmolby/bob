@@ -2,6 +2,7 @@ package gen
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/stephenafamo/bob/gen/drivers"
 )
@@ -11,7 +12,7 @@ func isPrimitiveType(name string) bool {
 	case "int", "int8", "int16", "int32", "int64",
 		"uint", "uint8", "uint16", "uint32", "uint64",
 		"float32", "float64",
-		"string", "bool":
+		"byte", "rune", "string", "bool":
 		return true
 	default:
 		return false
@@ -20,7 +21,7 @@ func isPrimitiveType(name string) bool {
 
 // processTypeReplacements checks the config for type replacements
 // and performs them.
-func processTypeReplacements[C, I any](types map[string]drivers.Type, replacements []Replace, tables []drivers.Table[C, I]) {
+func processTypeReplacements[C, I any](types drivers.Types, replacements []Replace, tables []drivers.Table[C, I]) {
 	for _, r := range replacements {
 		didMatch := false
 		for i := range tables {
@@ -35,7 +36,7 @@ func processTypeReplacements[C, I any](types map[string]drivers.Type, replacemen
 				if matchColumn(c, r.Match) {
 					didMatch = true
 
-					if _, ok := types[r.Replace]; !ok && !isPrimitiveType(r.Replace) {
+					if ok := types.Contains(r.Replace); !ok && !isPrimitiveType(r.Replace) {
 						fmt.Printf("WARNING: No definition found for replacement: %q\n", r.Replace)
 					}
 
@@ -47,7 +48,9 @@ func processTypeReplacements[C, I any](types map[string]drivers.Type, replacemen
 		// Print a warning if we didn't match anything
 		if !didMatch {
 			c := r.Match
-			fmt.Printf("WARNING: No match found for replacement:\nname: %s\ndb_type: %s\ndefault: %s\ncomment: %s\nnullable: %t\ngenerated: %t\nautoincr: %t\ndomain_name: %s\n", c.Name, c.DBType, c.Default, c.Comment, c.Nullable, c.Generated, c.AutoIncr, c.DomainName)
+			fmt.Printf(
+				"WARNING: No match found for replacement:\nname: %s\ndb_type: %s\ndefault: %s\ncomment: %s\nnullable: %t\ngenerated: %t\nautoincr: %t\ndomain_name: %s\n",
+				c.Name, c.DBType, c.Default, c.Comment, c.Nullable, c.Generated, c.AutoIncr, c.DomainName)
 		}
 	}
 }
@@ -97,9 +100,6 @@ func matchColumn(c, m drivers.Column) bool {
 	if m.Generated != c.Generated {
 		return false
 	}
-	if m.Nullable != c.Nullable {
-		return false
-	}
 
 	return true
 }
@@ -111,11 +111,5 @@ func shouldReplaceInTable[C, I any](t drivers.Table[C, I], r Replace) bool {
 		return true
 	}
 
-	for _, replaceInTable := range r.Tables {
-		if replaceInTable == t.Key {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(r.Tables, t.Key)
 }

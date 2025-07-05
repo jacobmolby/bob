@@ -7,15 +7,21 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/lib/pq"
 	helpers "github.com/stephenafamo/bob/gen/bobgen-helpers"
+	"github.com/stephenafamo/bob/gen/bobgen-psql/driver/parser"
 	"github.com/stephenafamo/bob/gen/drivers"
-	"github.com/stephenafamo/bob/gen/importers"
 	"github.com/stephenafamo/scan"
 	"github.com/stephenafamo/scan/stdscan"
 	"github.com/volatiletech/strmangle"
+)
+
+const (
+	pqDriver = "github.com/lib/pq"
+	// pgxDriver = "github.com/jackc/pgx/v5"
+	pgxStdlibDriver = "github.com/jackc/pgx/v5/stdlib"
+	defaultDriver   = pqDriver
 )
 
 var rgxValidColumnName = regexp.MustCompile(`(?i)^[a-z_][a-z0-9_]*$`)
@@ -31,40 +37,18 @@ type (
 	}
 )
 
-type Enum struct {
-	Schema string
-	Name   string
-	Type   string
-	Values pq.StringArray
-}
-
 type Config struct {
-	// The database connection string
-	Dsn string
+	helpers.Config `yaml:",squash"`
 	// The database schemas to generate models for
 	Schemas pq.StringArray
 	// The name of this schema will not be included in the generated models
 	// a context value can then be used to set the schema at runtime
 	// useful for multi-tenant setups
 	SharedSchema string `yaml:"shared_schema"`
-	// List of tables that will be included. Others are ignored
-	Only map[string][]string
-	// List of tables that will be should be ignored. Others are included
-	Except map[string][]string
-	// How many tables to fetch in parallel
-	Concurrency int
 	// Which UUID package to use (gofrs or google)
 	UUIDPkg string `yaml:"uuid_pkg"`
-	// Which `database/sql` driver to use (the full module name)
-	DriverName string `yaml:"driver_name"`
-
-	//-------
-
-	// The name of the folder to output the models package to
-	Output string
-	// The name you wish to assign to your generated models package
-	Pkgname   string
-	NoFactory bool `yaml:"no_factory"`
+	// How many tables to fetch in parallel
+	Concurrency int
 }
 
 func New(config Config) Interface {
@@ -81,8 +65,20 @@ func New(config Config) Interface {
 		config.UUIDPkg = "gofrs"
 	}
 
-	if config.DriverName == "" {
-		config.DriverName = "github.com/lib/pq"
+	if config.Driver == "" {
+		config.Driver = defaultDriver
+	}
+
+	switch config.Driver {
+	// These are the only supported drivers
+	case pqDriver, pgxStdlibDriver:
+	// case pgxDriver:
+	default:
+		panic(fmt.Sprintf(
+			"unsupported driver %s, supported drivers are: %q, %q",
+			config.Driver, pqDriver, pgxStdlibDriver,
+			// pgxDriver,
+		))
 	}
 
 	if config.Concurrency < 1 {
@@ -93,31 +89,29 @@ func New(config Config) Interface {
 
 	switch config.UUIDPkg {
 	case "google":
-		types["uuid.UUID"] = drivers.Type{
-			Imports:    importers.List{`"github.com/google/uuid"`},
+		types.Register("uuid.UUID", drivers.Type{
+			Imports:    []string{`"github.com/google/uuid"`},
 			RandomExpr: `return uuid.New()`,
-		}
+		})
 	default:
-		types["uuid.UUID"] = drivers.Type{
-			Imports:    importers.List{`"github.com/gofrs/uuid/v5"`},
+		types.Register("uuid.UUID", drivers.Type{
+			Imports:    []string{`"github.com/gofrs/uuid/v5"`},
 			RandomExpr: `return uuid.Must(uuid.NewV4())`,
-		}
+		})
 	}
 
 	return &driver{
-		config: config,
-		types:  types,
+		config:     config,
+		translator: &parser.Translator{Types: types},
 	}
 }
 
 // driver holds the database connection string and a handle
 // to the database connection.
 type driver struct {
-	config Config
-	conn   *sql.DB
-	enums  []Enum
-	types  drivers.Types
-	mu     sync.Mutex
+	config     Config
+	conn       *sql.DB
+	translator *parser.Translator
 }
 
 func (d *driver) Dialect() string {
@@ -125,7 +119,7 @@ func (d *driver) Dialect() string {
 }
 
 func (d *driver) Types() drivers.Types {
-	return d.types
+	return d.translator.Types
 }
 
 // Assemble all the information we need to provide back to the driver
@@ -143,7 +137,7 @@ func (d *driver) Assemble(ctx context.Context) (*DBInfo, error) {
 	}
 	defer d.conn.Close()
 
-	dbinfo = &DBInfo{DriverName: d.config.DriverName}
+	dbinfo = &DBInfo{Driver: d.config.Driver}
 
 	// drivers.Tables call translateColumnType which uses Enums
 	if err := d.loadEnums(ctx); err != nil {
@@ -155,8 +149,8 @@ func (d *driver) Assemble(ctx context.Context) (*DBInfo, error) {
 		return nil, err
 	}
 
-	dbinfo.Enums = make([]drivers.Enum, len(d.enums))
-	for i, e := range d.enums {
+	dbinfo.Enums = make([]drivers.Enum, len(d.translator.Enums))
+	for i, e := range d.translator.Enums {
 		dbinfo.Enums[i] = drivers.Enum{
 			Type:   e.Type,
 			Values: e.Values,
@@ -166,6 +160,11 @@ func (d *driver) Assemble(ctx context.Context) (*DBInfo, error) {
 	sort.Slice(dbinfo.Enums, func(i, j int) bool {
 		return dbinfo.Enums[i].Type < dbinfo.Enums[j].Type
 	})
+
+	dbinfo.QueryFolders, err = parser.New(d.conn, dbinfo.Tables, d.config.SharedSchema, d.translator).ParseFolders(ctx, d.config.Queries...)
+	if err != nil {
+		return nil, fmt.Errorf("parse query folders: %w", err)
+	}
 
 	return dbinfo, err
 }
@@ -233,7 +232,12 @@ func (d *driver) TablesInfo(ctx context.Context, tableFilter drivers.Filter) (dr
 
 	query += ` order by table_name;`
 
-	return stdscan.All(ctx, d.conn, scan.StructMapper[drivers.TableInfo](), query, args...)
+	infos, err := stdscan.All(ctx, d.conn, scan.StructMapper[drivers.TableInfo](), query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("unable to load table infos: %w", err)
+	}
+
+	return infos, nil
 }
 
 // Load details about a single table
@@ -243,23 +247,30 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
 
 	tableQuery := `
 	SELECT
-		c.ordinal_position,
-		c.column_name,
-		ct.column_type,
-		c.udt_schema,
-		c.udt_name,
-		(
-			SELECT
-				data_type
-			FROM
-				information_schema.element_types e
-			WHERE
-				c.table_catalog = e.object_catalog
-				AND c.table_schema = e.object_schema
-				AND c.table_name = e.object_name
-				AND 'TABLE' = e.object_type
-				AND c.dtd_identifier = e.collection_type_identifier
-		) AS array_type,
+	c.ordinal_position,
+	c.column_name,
+	(
+		CASE WHEN udttype.typtype = 'e' THEN
+			'ENUM'
+		ELSE
+			c.data_type
+		END
+	) AS column_type,
+	substring(format_type(attr.atttypid, attr.atttypmod), '\((\d+(,\d+)?)\)') AS type_limits,
+	c.udt_schema,
+	c.udt_name,
+	(
+		SELECT
+			data_type
+		FROM
+			information_schema.element_types e
+		WHERE
+			c.table_catalog = e.object_catalog
+			AND c.table_schema = e.object_schema
+			AND c.table_name = e.object_name
+			AND 'TABLE' = e.object_type
+			AND c.dtd_identifier = e.collection_type_identifier
+	) AS array_type,
 	c.domain_name,
 	c.column_default,
 	coalesce(col_description(('"' || c.table_schema || '"."' || c.table_name || '"')::regclass::oid, ordinal_position), '') AS column_comment,
@@ -270,7 +281,8 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
 			TRUE
 		ELSE
 			FALSE
-		END) AS is_generated,
+		END
+	) AS is_generated,
 	(
 		CASE WHEN (
 			SELECT
@@ -290,21 +302,18 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
 			'NO'
 		ELSE
 			is_identity
-		END) = 'YES' AS is_identity
-	FROM
-		information_schema.columns AS c
-		INNER JOIN pg_namespace AS pgn ON pgn.nspname = c.udt_schema
-		LEFT JOIN pg_type pgt ON c.data_type = 'USER-DEFINED'
-			AND pgn.oid = pgt.typnamespace
-			AND c.udt_name = pgt.typname,
-			LATERAL (
-				SELECT
-					(
-						CASE WHEN pgt.typtype = 'e' THEN
-							'ENUM'
-						ELSE
-							c.data_type
-						END) AS column_type) ct
+		END
+	) = 'YES' AS is_identity
+	FROM information_schema.columns AS c
+	LEFT JOIN pg_namespace pgn ON pgn.nspname = c.table_schema
+	LEFT JOIN pg_class pgc ON pgc.relnamespace = pgn.oid AND pgc.relname = c.table_name
+	LEFT JOIN pg_attribute attr ON attr.attrelid = pgc.oid AND attr.attname = c.column_name
+	LEFT JOIN pg_type pgt ON pgt.oid = attr.atttypid
+	INNER JOIN pg_namespace AS udtnamespace ON udtnamespace.nspname = c.udt_schema
+	LEFT JOIN pg_type udttype
+		ON c.data_type = 'USER-DEFINED'
+		AND udtnamespace.oid = udttype.typnamespace
+		AND c.udt_name = udttype.typname
 	WHERE c.table_name = $2 and c.table_schema = $1
 	ORDER BY c.ordinal_position`
 
@@ -312,6 +321,7 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
 	query := fmt.Sprintf(`SELECT 
 		column_name,
 		column_type,
+		type_limits,
 		udt_schema,
 		udt_name,
 		array_type,
@@ -347,7 +357,7 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
 
 	query += ` order by c.ordinal_position;`
 
-	rows, err := d.conn.Query(query, args...)
+	rows, err := d.conn.QueryContext(ctx, query, args...)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -355,34 +365,28 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
 
 	for rows.Next() {
 		var colName, colType, udtSchema, udtName, comment string
-		var defaultValue, arrayType, domainName *string
+		var typeLimits, defaultValue, arrayType, domainName sql.NullString
 		var nullable, generated, identity bool
-		if err := rows.Scan(&colName, &colType, &udtSchema, &udtName, &arrayType, &domainName, &defaultValue, &comment, &nullable, &generated, &identity); err != nil {
+		if err := rows.Scan(&colName, &colType, &typeLimits, &udtSchema, &udtName, &arrayType, &domainName, &defaultValue, &comment, &nullable, &generated, &identity); err != nil {
 			return "", "", nil, fmt.Errorf("unable to scan for table %s: %w", info.Key, err)
 		}
 
 		column := drivers.Column{
-			Name:      colName,
-			DBType:    colType,
-			Comment:   comment,
-			Nullable:  nullable,
-			Generated: generated,
+			Name:       colName,
+			DBType:     colType,
+			Comment:    comment,
+			Nullable:   nullable,
+			Generated:  generated,
+			DomainName: domainName.String,
+			Default:    defaultValue.String,
 		}
-		info := colInfo{
+		if typeLimits.Valid {
+			column.TypeLimits = strings.Split(typeLimits.String, ",")
+		}
+		info := parser.ColInfo{
 			UDTSchema: udtSchema,
 			UDTName:   udtName,
-		}
-
-		if arrayType != nil {
-			info.ArrType = *arrayType
-		}
-
-		if domainName != nil {
-			column.DomainName = *domainName
-		}
-
-		if defaultValue != nil {
-			column.Default = *defaultValue
+			ArrType:   arrayType.String,
 		}
 
 		if identity {
@@ -399,7 +403,7 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
 			column.Default = "NULL"
 		}
 
-		columns = append(columns, d.translateColumnType(column, info))
+		columns = append(columns, d.translator.TranslateColumnType(column, info))
 	}
 
 	schema := info.Schema
@@ -411,7 +415,7 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
 }
 
 func (d *driver) loadEnums(ctx context.Context) error {
-	if d.enums != nil {
+	if d.translator.Enums != nil {
 		return nil
 	}
 
@@ -423,17 +427,17 @@ func (d *driver) loadEnums(ctx context.Context) error {
 		GROUP BY schema, name`
 
 	var err error
-	d.enums, err = stdscan.All(
+	d.translator.Enums, err = stdscan.All(
 		ctx, d.conn,
-		func(_ context.Context, _ []string) (scan.BeforeFunc, func(any) (Enum, error)) {
+		func(_ context.Context, _ []string) (scan.BeforeFunc, func(any) (parser.Enum, error)) {
 			return func(r *scan.Row) (any, error) {
-					var e Enum
-					r.ScheduleScan("schema", &e.Schema)
-					r.ScheduleScan("name", &e.Name)
-					r.ScheduleScan("values", &e.Values)
+					var e parser.Enum
+					r.ScheduleScanByName("schema", &e.Schema)
+					r.ScheduleScanByName("name", &e.Name)
+					r.ScheduleScanByName("values", &e.Values)
 					return &e, nil
-				}, func(a any) (Enum, error) {
-					e := a.(*Enum)
+				}, func(a any) (parser.Enum, error) {
+					e := a.(*parser.Enum)
 					if e.Schema != "" && e.Schema != d.config.SharedSchema {
 						e.Type = strmangle.TitleCase(e.Schema + "_" + e.Name)
 					} else {
@@ -537,7 +541,7 @@ func (d *driver) Indexes(ctx context.Context) (drivers.DBIndexes[IndexExtra], er
 func (d *driver) Comments(ctx context.Context) (map[string]string, error) {
 	query := fmt.Sprintf(`SELECT
 	  %s AS "key",
-      obj_description((table_schema||'.'||table_name)::regclass::oid, 'pg_class') AS comment
+      obj_description(('"'||table_schema||'"."'||table_name||'"')::regclass::oid, 'pg_class') AS comment
 	FROM (
 	  SELECT
 		table_name,
@@ -561,7 +565,7 @@ func (d *driver) Comments(ctx context.Context) (map[string]string, error) {
 		Comment sql.NullString
 	}](), query, args...) {
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("unable to load comments: %w", err)
 		}
 		comments[row.Key] = row.Comment.String
 	}

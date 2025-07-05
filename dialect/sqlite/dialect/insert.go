@@ -13,10 +13,12 @@ import (
 type InsertQuery struct {
 	clause.With
 	or
-	clause.Table
+	clause.TableRef
 	clause.Values
 	clause.Conflict
 	clause.Returning
+
+	bob.Load
 	bob.EmbeddedHook
 	bob.ContextualModdable[*InsertQuery]
 }
@@ -43,7 +45,7 @@ func (i InsertQuery) WriteSQL(ctx context.Context, w io.Writer, d bob.Dialect, s
 		return nil, err
 	}
 
-	tableArgs, err := bob.ExpressIf(ctx, w, d, start+len(args), i.Table, true, " INTO ", "")
+	tableArgs, err := bob.ExpressIf(ctx, w, d, start+len(args), i.TableRef, true, " INTO ", "")
 	if err != nil {
 		return nil, err
 	}
@@ -55,8 +57,8 @@ func (i InsertQuery) WriteSQL(ctx context.Context, w io.Writer, d bob.Dialect, s
 	}
 	args = append(args, valArgs...)
 
-	conflictArgs, err := bob.ExpressIf(ctx, w, d, start+len(args), i.Conflict,
-		i.Conflict.Do != "", "\n", "")
+	conflictArgs, err := bob.ExpressIf(ctx, w, d, start+len(args), i.Conflict.Expression,
+		i.Conflict.Expression != nil, "\n", "")
 	if err != nil {
 		return nil, err
 	}

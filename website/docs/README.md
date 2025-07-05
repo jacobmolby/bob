@@ -10,8 +10,8 @@ import DocCardList from '@theme/DocCardList';
 
 |               | Queries | Models | ORM Gen | Factory Gen | Query Gen |
 | ------------- | ------- | ------ | ------- | ----------- | --------- |
-| Postgres      | ✅      | ✅     | ✅      | ✅          |           |
-| MySQL/MariaDB | ✅      | ✅     | ✅      | ✅          |           |
+| Postgres      | ✅      | ✅     | ✅      | ✅          | ✅        |
+| MySQL/MariaDB | ✅      | ✅     | ✅      | ✅          | ✅        |
 | SQLite        | ✅      | ✅     | ✅      | ✅          | ✅        |
 
 Bob is a set of Go packages and tools to work with SQL databases.
@@ -28,15 +28,14 @@ Bob's philosophy centers around the following:
 
 ## 1. Query Builder
 
-Bob can be used to build queries, this is similar to other packages like [squirrel](https://github.com/Masterminds/squirrel) and [goqu](https://github.com/doug-martin/goqu)
-
-However, Bob strives to be fully spec compliant. As a result, you can build **almost any** query permitted by the dialect. And because the query builders are custom crafted for each dialect. You are almost unable to build an invalid query.
+Bob can be used to build queries, similar to packages like [squirrel](https://github.com/Masterminds/squirrel) and [goqu](https://github.com/doug-martin/goqu).
+However, Bob strives to be fully spec compliant. As a result, you can build **almost any** query permitted by the dialect. Since the query builders are custom crafted for each dialect, it is almost impossible to build an invalid query.
 
 To learn more, see the [query builder documentation](./query-builder/intro).
 
 ## 2. SQL Executor
 
-Bob includes an SQL executor that conveniently returns types from queries to avoid doing `rows.Scan()` over and over.
+Bob includes an SQL executor that conveniently returns typed (parsed user-defined struct) results from queries to avoid doing `rows.Scan()` repeatedly.
 
 Bob's executor can build and execute Bob queries in a single call.
 
@@ -45,7 +44,7 @@ Bob's executor can build and execute Bob queries in a single call.
 - `Cursor()`: To loop through rows. Useful for large results
 - `Prepare()`: For prepared statements
 
-In addition, the executor covers the usual range of DB activities:
+In addition, the executor includes all the usual DB interface functionality:
 
 - Ping the database for health checks
 - Start and run transactions
@@ -56,9 +55,9 @@ To learn more, see the [sql executor documentation](./sql-executor/intro).
 
 ## 3. Models
 
-Get a model to easily query your entity tables.
+Define a model to easily query your entity tables.
 
-**NewView()**: Returns a view (which is read-only table).
+**NewView()**: Returns a View model (which is a read-only table).
 
 ```go
 type User struct {
@@ -71,7 +70,7 @@ type User struct {
 var userView = psql.NewView[User]("public", "users")
 ```
 
-**NewTable()**: This take an extra type that is used as the "setter". The setter is expected to have "Optional" fields used to know which values are being inserted/updated.
+**NewTable()**: Returns a Table model. This function takes an extra type parameter, used as the "setter". The setter is expected to have "Optional" fields used to specify  values intended to be inserted/updated.
 
 ```go
 type UserSetter struct {
@@ -88,7 +87,7 @@ To learn more about the methods attached to views and tables, see the [models do
 
 ## 4. Code Generation
 
-**Bob** includes code generators that will read your database structure and generate a fully featured and type safe ORM for you.
+**Bob** includes code generators that read the database structure and generate a custom full-featured type-safe ORM.
 
 - Work with existing databases. Don't be the tool to define the schema, that's better left to other tools.
 - Eliminate all sql boilerplate, have relationships as a first-class concept.
@@ -100,9 +99,10 @@ To learn more about the methods attached to views and tables, see the [models do
 
 ### Model Generation
 
-Types are generated for your database tables to use [Bob's models](./models/intro), in **addition** to that, the following are also generated:
+Types corresponding to the database tables are generateed, for use with [Bob's models](./models/intro).
+**Additionly**, the following code is also generated:
 
-- Additional convenience methods on the model structs for CRUD.
+- CRUD Convenience methods on the model structs.
 - A dedicated type for collections.
 - Type safe variables for table and column names.
 - Type safe representation of ENUMS.
@@ -142,6 +142,22 @@ generate factories that offer many benefits:
 - Create templates from the rules, overriding specific columns as needed.
 - Build models based on the model templates and use them in tests.
 - Insert the model in the database to truly test your application. Bob will help you by inserting any dependent models.
+
+### Generating code for SQL Queries
+
+Bob can generate code for queries. For example, for the following query:
+
+```sql
+-- UserPosts
+SELECT * FROM posts WHERE user_id = $1
+```
+
+This will generate a function `UserPosts` that takes an `int32`.
+
+```go
+// UserPosts
+userPosts, err := queries.UserPosts(1).All(ctx, db)
+```
 
 <DocCardList items={[
 {

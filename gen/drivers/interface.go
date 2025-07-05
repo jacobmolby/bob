@@ -8,8 +8,6 @@ import (
 	"slices"
 	"sort"
 	"sync"
-
-	"github.com/stephenafamo/bob/gen/importers"
 )
 
 // Interface abstracts either a side-effect imported driver or a binary
@@ -23,46 +21,14 @@ type Interface[DBExtra, ConstraintExtra, IndexExtra any] interface {
 	Types() Types
 }
 
-type Type struct {
-	// If this type is an alias of another type
-	// this is useful to have custom randomization for a type e.g. xml
-	AliasOf string `yaml:"alias_of"`
-	// Imports needed for the type
-	Imports importers.List `yaml:"imports"`
-	// Any other types that this type depends on
-	DependsOn []string `yaml:"depends_on"`
-	// To be used in factory.random_type
-	// a variable `f` of type `faker.Faker` is available
-	RandomExpr string `yaml:"random_expr"`
-	// Additional imports for the randomize expression
-	RandomExprImports importers.List `yaml:"random_expr_imports"`
-	// Set this to true if the randomization should not be tested
-	// this is useful for low-cardinality types like bool
-	NoRandomizationTest bool `yaml:"no_randomization_test"`
-	// Set this to true if the test to see if the type implements
-	// the scanner and valuer interfaces should be skipped
-	// this is useful for types that are based on a primitive type
-	NoScannerValuerTest bool `yaml:"no_scanner_valuer_test"`
-	// CompareExpr is used to compare two values of this type
-	// if not provided, == is used
-	// Used AAA and BBB as placeholders for the two values
-	CompareExpr string `yaml:"compare_expr"`
-	// Imports needed for the compare expression
-	CompareExprImports importers.List `yaml:"compare_expr_imports"`
-	// If factory generation should have "models." prefix
-	InGeneratedPackage bool `yaml:"in_generated_package"`
-}
-
-type Types map[string]Type
-
 // DBInfo is the database's table data and dialect.
 type DBInfo[DBExtra, ConstraintExtra, IndexExtra any] struct {
 	Tables       Tables[ConstraintExtra, IndexExtra] `json:"tables"`
 	QueryFolders []QueryFolder                       `json:"query_folders"`
 	Enums        []Enum                              `json:"enums"`
 	ExtraInfo    DBExtra                             `json:"extra_info"`
-	// DriverName is the module name of the underlying `database/sql` driver
-	DriverName string `json:"driver_name"`
+	// Driver is the module name of the underlying `database/sql` driver
+	Driver string `json:"driver"`
 }
 
 type Enum struct {

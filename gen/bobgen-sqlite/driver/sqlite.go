@@ -3,22 +3,31 @@ package driver
 import (
 	"context"
 	"database/sql"
+	sqlDriver "database/sql/driver"
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/aarondl/opt/null"
 	helpers "github.com/stephenafamo/bob/gen/bobgen-helpers"
 	"github.com/stephenafamo/bob/gen/bobgen-sqlite/driver/parser"
 	"github.com/stephenafamo/bob/gen/drivers"
 	"github.com/stephenafamo/scan"
 	"github.com/stephenafamo/scan/stdscan"
-	_ "github.com/tursodatabase/libsql-client-go/libsql"
 	"github.com/volatiletech/strmangle"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+)
+
+const (
+	mattnDriver    = "github.com/mattn/go-sqlite3"
+	morderncDriver = "modernc.org/sqlite"
+	ncrucesDriver  = "github.com/ncruces/go-sqlite3"
+	libsqlDriver   = "github.com/tursodatabase/libsql-client-go/libsql"
+	defaultDriver  = morderncDriver
 )
 
 type (
@@ -27,39 +36,53 @@ type (
 	IndexExtra = parser.IndexExtra
 )
 
+func init() {
+	if err := registerRegexpFunction(); err != nil {
+		panic(fmt.Sprintf("failed to register regexp function: %v", err))
+	}
+}
+
 func New(config Config) Interface {
-	if config.DriverName == "" {
-		config.DriverName = "modernc.org/sqlite"
+	if config.Driver == "" {
+		config.Driver = defaultDriver
+	}
+
+	switch config.Driver {
+	// These are the only supported drivers
+	case mattnDriver, morderncDriver, ncrucesDriver, libsqlDriver:
+	default:
+		panic(fmt.Sprintf(
+			"unsupported driver %q, supported drivers are: %q, %q, %q, %q",
+			config.Driver,
+			mattnDriver, morderncDriver,
+			ncrucesDriver, libsqlDriver,
+		))
 	}
 	return &driver{config: config}
 }
 
 type Config struct {
-	// The database connection string
-	DSN string
+	helpers.Config `yaml:",squash"`
 	// The database schemas to generate models for
 	// a map of the schema name to the DSN
 	Attach map[string]string
-	// Folders containing query files
-	Queries []string `yaml:"queries"`
 	// The name of this schema will not be included in the generated models
 	// a context value can then be used to set the schema at runtime
 	// useful for multi-tenant setups
 	SharedSchema string `yaml:"shared_schema"`
-	// List of tables that will be included. Others are ignored
-	Only map[string][]string
-	// List of tables that will be should be ignored. Others are included
-	Except map[string][]string
-	// Which `database/sql` driver to use (the full module name)
-	DriverName string `yaml:"driver_name"`
+}
 
-	// Used in main.go
+func (c Config) AttachQueries() []string {
+	driverName := inferDriver(c)
+	queries := make([]string, 0, len(c.Attach))
+	for schema, dsn := range c.Attach {
+		if driverName == "sqlite" {
+			dsn = strconv.Quote(dsn)
+		}
+		queries = append(queries, fmt.Sprintf("attach database %s as %s", dsn, schema))
+	}
 
-	// The name of the folder to output the models package to
-	Output string
-	// The name you wish to assign to your generated models package
-	Pkgname   string
-	NoFactory bool `yaml:"no_factory"`
+	return queries
 }
 
 // driver holds the database connection string and a handle
@@ -85,6 +108,17 @@ func (d *driver) Types() drivers.Types {
 	return helpers.Types()
 }
 
+func attach(ctx context.Context, db *sql.DB, config Config) error {
+	for _, query := range config.AttachQueries() {
+		_, err := db.ExecContext(ctx, query)
+		if err != nil {
+			return fmt.Errorf("error running query %s: %w", query, err)
+		}
+	}
+
+	return nil
+}
+
 // Assemble all the information we need to provide back to the driver
 func (d *driver) Assemble(ctx context.Context) (*DBInfo, error) {
 	var err error
@@ -93,12 +127,12 @@ func (d *driver) Assemble(ctx context.Context) (*DBInfo, error) {
 		d.config.SharedSchema = "main"
 	}
 
-	if d.config.DSN == "" {
+	if d.config.Dsn == "" {
 		return nil, fmt.Errorf("database dsn is not set")
 	}
 
-	driverName := d.inferDriver()
-	d.conn, err = sql.Open(driverName, d.config.DSN)
+	driverName := inferDriver(d.config)
+	d.conn, err = sql.Open(driverName, d.config.Dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -119,16 +153,16 @@ func (d *driver) Assemble(ctx context.Context) (*DBInfo, error) {
 		return nil, fmt.Errorf("getting tables: %w", err)
 	}
 
-	queries, err := parser.New(tables).ParseFolders(d.config.Queries...)
+	queries, err := parser.New(tables, driverName).ParseFolders(ctx, d.config.Queries...)
 	if err != nil {
 		return nil, fmt.Errorf("parse query folders: %w", err)
 	}
 
 	if driverName == "libsql" {
-		d.config.DriverName = "github.com/tursodatabase/libsql-client-go/libsql"
+		d.config.Driver = "github.com/tursodatabase/libsql-client-go/libsql"
 	}
 	dbinfo := &DBInfo{
-		DriverName:   d.config.DriverName,
+		Driver:       d.config.Driver,
 		Tables:       tables,
 		QueryFolders: queries,
 	}
@@ -136,12 +170,12 @@ func (d *driver) Assemble(ctx context.Context) (*DBInfo, error) {
 	return dbinfo, nil
 }
 
-func (d *driver) inferDriver() string {
+func inferDriver(config Config) string {
 	driverName := "sqlite"
-	if !strings.Contains(d.config.DSN, "://") {
+	if !strings.Contains(config.Dsn, "://") {
 		return driverName
 	}
-	dsn, _ := url.Parse(d.config.DSN)
+	dsn, _ := url.Parse(config.Dsn)
 	if dsn == nil {
 		return driverName
 	}
@@ -289,16 +323,19 @@ func (d driver) getTable(ctx context.Context, schema, name string, colFilter dri
 	// Also check if the primary key is in the indexes
 	hasPk := false
 	for _, index := range table.Indexes {
-		constraint := drivers.Constraint[any]{
-			Name:    index.Name,
-			Columns: index.NonExpressionColumns(),
-		}
-
 		switch index.Type {
 		case "pk":
 			hasPk = true
 		case "u":
-			table.Constraints.Uniques = append(table.Constraints.Uniques, constraint)
+			if !index.HasExpressionColumn() {
+				table.Constraints.Uniques = append(
+					table.Constraints.Uniques,
+					drivers.Constraint[any]{
+						Name:    index.Name,
+						Columns: index.NonExpressionColumns(),
+					},
+				)
+			}
 		}
 	}
 
@@ -391,7 +428,7 @@ func (d driver) columns(ctx context.Context, schema, tableName string, tinfo []i
 			column.Default = "NULL"
 		}
 
-		column.Type = parser.TranslateColumnType(column.DBType)
+		column.Type = parser.TranslateColumnType(column.DBType, inferDriver(d.config))
 		columns = append(columns, column)
 	}
 
@@ -449,12 +486,7 @@ func (d driver) skipKey(table, column string) bool {
 			return false
 		}
 
-		for _, filteredCol := range filter {
-			if filteredCol == column {
-				return false
-			}
-		}
-		return true
+		return !slices.Contains(filter, column)
 	}
 
 	if len(d.config.Except) > 0 {
@@ -467,10 +499,8 @@ func (d driver) skipKey(table, column string) bool {
 			return true
 		}
 
-		for _, filteredCol := range filter {
-			if filteredCol == column {
-				return true
-			}
+		if slices.Contains(filter, column) {
+			return true
 		}
 	}
 
@@ -489,7 +519,7 @@ func (d driver) foreignKeys(ctx context.Context, schema, tableName string) ([]dr
 	for rows.Next() {
 		var id, seq int
 		var ftable, col string
-		var fcolNullable null.Val[string]
+		var fcolNullable sql.Null[string]
 
 		// not used
 		var onupdate, ondelete, match string
@@ -504,7 +534,7 @@ func (d driver) foreignKeys(ctx context.Context, schema, tableName string) ([]dr
 			fullFtable = fmt.Sprintf("%s.%s", schema, ftable)
 		}
 
-		fcol, _ := fcolNullable.Get()
+		fcol := fcolNullable.V
 		if fcol == "" {
 			fcol, err = stdscan.One(
 				ctx, d.conn, scan.SingleColumnMapper[string],
@@ -704,7 +734,7 @@ func (d driver) splitColumnDefinitions(ddl string) []string {
 	var defs []string
 	var i, pOpen int
 
-	for j := 0; j < len(ddl); j++ {
+	for j := range len(ddl) {
 		if ddl[j] == '(' {
 			pOpen++
 		}
@@ -722,4 +752,32 @@ func (d driver) splitColumnDefinitions(ddl string) []string {
 	}
 
 	return defs
+}
+
+func registerRegexpFunction() error {
+	return sqlite.RegisterScalarFunction("regexp", 2, func(
+		ctx *sqlite.FunctionContext,
+		args []sqlDriver.Value,
+	) (sqlDriver.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
+		}
+
+		re, ok := args[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("expected string, got %T", args[0])
+		}
+
+		s, ok := args[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("expected string, got %T", args[1])
+		}
+
+		match, err := regexp.MatchString(re, s)
+		if err != nil {
+			return nil, err
+		}
+
+		return match, nil
+	})
 }

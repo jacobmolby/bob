@@ -2,10 +2,10 @@ package drivers
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
-	"github.com/stephenafamo/bob/gen/importers"
-	"github.com/stephenafamo/bob/internal"
+	"github.com/stephenafamo/bob/gen/language"
 	"github.com/stephenafamo/bob/orm"
 )
 
@@ -34,92 +34,104 @@ func (tables Tables[C, I]) GetColumn(table string, column string) Column {
 	panic("unknown table " + table)
 }
 
-func (tables Tables[C, I]) ColumnGetter(alias TableAlias, table, column string) string {
+func (tables Tables[C, I]) ColumnSetter(currPkg string, i language.Importer, types Types, table, column, val, nullVal string) string {
 	for _, t := range tables {
 		if t.Key != table {
 			continue
 		}
 
 		col := t.GetColumn(column)
-		colAlias := alias.Column(column)
 		if !col.Nullable {
-			return colAlias
+			return val
 		}
 
-		return fmt.Sprintf("%s.GetOrZero()", colAlias)
+		colTyp, _ := types.GetNameAndDef(currPkg, col.Type)
+		nullType := types.GetNullType(currPkg, col.Type)
+
+		i.ImportList(nullType.CreateExprImports)
+		return strings.NewReplacer(
+			"SRC", val,
+			"BASETYPE", colTyp,
+			"NULLTYPE", nullType.Name,
+			"NULLVAL", nullVal,
+		).Replace(nullType.CreateExpr)
 	}
 
 	panic("unknown table " + table)
 }
 
-type Importer interface {
-	Import(...string) string
-	ImportList(list importers.List) string
-}
-
-type dummyImporter struct{}
-
-func (dummyImporter) Import(...string) string          { return "" }
-func (dummyImporter) ImportList(importers.List) string { return "" }
-
-func (tables Tables[C, I]) columnSetter(i Importer, aliases Aliases, fromTName, toTName, fromColName, toColName, varName string, fromOpt, toOpt bool) string {
-	fromTable := tables.Get(fromTName)
-	fromCol := fromTable.GetColumn(fromColName)
-
-	toTable := tables.Get(toTName)
-	toCol := toTable.GetColumn(toColName)
-	to := fmt.Sprintf("%s.%s", varName, aliases[toTName].Columns[toColName])
-
-	switch {
-	case (fromOpt == toOpt) && (toCol.Nullable == fromCol.Nullable):
-		// If both type match, return it plainly
-		return to
-
-	case !fromOpt && !fromCol.Nullable:
-		// if from is concrete, then use MustGet()
-		return fmt.Sprintf("%s.MustGet()", to)
-
-	case fromOpt && fromCol.Nullable && !toOpt && !toCol.Nullable:
-		i.Import("github.com/aarondl/opt/omitnull")
-		return fmt.Sprintf("omitnull.From(%s)", to)
-
-	case fromOpt && fromCol.Nullable && !toOpt && toCol.Nullable:
-		i.Import("github.com/aarondl/opt/omitnull")
-		return fmt.Sprintf("omitnull.FromNull(%s)", to)
-
-	case fromOpt && fromCol.Nullable && toOpt && !toCol.Nullable:
-		i.Import("github.com/aarondl/opt/omitnull")
-		return fmt.Sprintf("omitnull.FromOmit(%s)", to)
-
-	default:
-		// from is either omit or null
-		val := "omit"
-		if fromCol.Nullable {
-			val = "null"
-		}
-
-		i.Import(fmt.Sprintf("github.com/aarondl/opt/%s", val))
-
-		switch {
-		case !toOpt && !toCol.Nullable:
-			return fmt.Sprintf("%s.From(%s)", val, to)
-
-		default:
-			return fmt.Sprintf("%s.FromCond(%s.GetOrZero(), %s.IsSet())", val, to, to)
-		}
-	}
-}
-
-func (tables Tables[C, I]) ColumnSetter(table, column string) bool {
+func (tables Tables[C, I]) ColumnGetter(currPkg string, i language.Importer, types Types, table, column, varName string) string {
 	for _, t := range tables {
 		if t.Key != table {
 			continue
 		}
 
-		return t.CanSoftDelete(column)
+		col := t.GetColumn(column)
+		if !col.Nullable {
+			return varName
+		}
+
+		colTyp, _ := types.GetNameAndDef(currPkg, col.Type)
+		nullType := types.GetNullType(currPkg, col.Type)
+
+		i.ImportList(nullType.UseExprImports)
+		return strings.NewReplacer(
+			"SRC", varName,
+			"BASETYPE", colTyp,
+			"NULLTYPE", nullType.Name,
+			"NULLVAL", "true",
+		).Replace(nullType.UseExpr)
 	}
 
 	panic("unknown table " + table)
+}
+
+// The source is never optional, but the destination can be
+func (tables Tables[C, I]) ColumnAssigner(
+	currentPkg string, i language.Importer, types Types, aliases Aliases,
+	destTName, srcTName string,
+	destColName, srcColName string,
+	varName string, destOpt bool,
+) string {
+	src := fmt.Sprintf("%s.%s", varName, aliases[srcTName].Columns[srcColName])
+	srcTable := tables.Get(srcTName)
+	srcCol := srcTable.GetColumn(srcColName)
+
+	destTable := tables.Get(destTName)
+	destCol := destTable.GetColumn(destColName)
+
+	nullType := types.GetNullType(currentPkg, destCol.Type)
+	typeReplacer := strings.NewReplacer(
+		"BASETYPE", destCol.Type,
+		"NULLTYPE", nullType.Name,
+		"NULLVAL", "true",
+		"SRC", src,
+	)
+
+	//-----------------------------------------------------------------------
+	// This switch handles the cases when we
+	// don't need the nullable type information
+	//-----------------------------------------------------------------------
+	switch {
+	case destOpt:
+		return types.ToOptional(currentPkg, i, srcCol.Type, src, destCol.Nullable, srcCol.Nullable)
+
+	// Same nullability, dest IS NOT optional
+	case !destOpt && (srcCol.Nullable == destCol.Nullable):
+		return src
+
+	case !destOpt && destCol.Nullable && !srcCol.Nullable:
+		i.ImportList(nullType.CreateExprImports)
+		return typeReplacer.Replace(nullType.CreateExpr)
+
+	case !destOpt && !destCol.Nullable && srcCol.Nullable:
+		i.ImportList(nullType.UseExprImports)
+		return typeReplacer.Replace(nullType.UseExpr)
+
+	default:
+		panic(fmt.Sprintf("unknown column assign case: %s.%s -> %s.%s", destTName, destColName, srcTName, srcColName))
+	}
+	//=======================================================================
 }
 
 func (tables Tables[C, I]) NeededBridgeRels(r orm.Relationship) []struct {
@@ -156,7 +168,7 @@ func (tables Tables[C, I]) NeededBridgeRels(r orm.Relationship) []struct {
 			if col.Generated {
 				continue
 			}
-			if internal.InList(side.Columns(), col.Name) {
+			if slices.Contains(side.Columns(), col.Name) {
 				continue
 			}
 
@@ -255,7 +267,7 @@ func (tables Tables[C, I]) RelDependenciesTypSet(aliases Aliases, r orm.Relation
 	return strings.Join(ma, "\n")
 }
 
-func (tables Tables[C, I]) SetFactoryDeps(i Importer, aliases Aliases, r orm.Relationship, inLoop bool) string {
+func (tables Tables[C, I]) SetFactoryDeps(currPkg string, i language.Importer, types Types, aliases Aliases, r orm.Relationship, inLoop bool) string {
 	local := r.Local()
 	foreign := r.Foreign()
 	ksides := r.ValuedSides()
@@ -281,22 +293,22 @@ func (tables Tables[C, I]) SetFactoryDeps(i Importer, aliases Aliases, r orm.Rel
 			objVarName := getVarName(aliases, kside.TableName, kside.Start, kside.End, false)
 
 			if mapp.Value != [2]string{} {
-				oGetter := tables.ColumnGetter(oalias, kside.TableName, mapp.Column)
+				oGetter := tables.ColumnGetter(currPkg, i, types, kside.TableName, mapp.Column, objVarName+"."+oalias.Column(mapp.Column))
 
 				if kside.TableName == r.Local() {
 					i.Import("github.com/stephenafamo/bob/orm")
-					mret = append(mret, fmt.Sprintf(`if %s.%s != %s {
+					mret = append(mret, fmt.Sprintf(`if %s != %s {
 								return &orm.RelationshipChainError{
 									Table1: %q, Column1: %q, Value: %q,
 								}
 							}`,
-						objVarName, oGetter, mapp.Value[1],
+						oGetter, mapp.Value[1],
 						kside.TableName, mapp.Column, mapp.Value[1],
 					))
 					continue
 				}
 
-				mret = append(mret, fmt.Sprintf(`%s.%s = %s`,
+				mret = append(mret, fmt.Sprintf(`%s.%s = %s //h`,
 					objVarName,
 					oalias.Columns[mapp.Column],
 					mapp.Value[1],
@@ -306,12 +318,13 @@ func (tables Tables[C, I]) SetFactoryDeps(i Importer, aliases Aliases, r orm.Rel
 
 			extObjVarName := getVarName(aliases, mapp.ExternalTable, mapp.ExternalStart, mapp.ExternalEnd, false)
 
-			oSetter := tables.columnSetter(i, aliases,
+			oSetter := tables.ColumnAssigner(
+				currPkg, i, types, aliases,
 				kside.TableName, mapp.ExternalTable,
 				mapp.Column, mapp.ExternalColumn,
-				extObjVarName, false, false)
+				extObjVarName, false)
 
-			mret = append(mret, fmt.Sprintf(`%s.%s = %s`,
+			mret = append(mret, fmt.Sprintf(`%s.%s = %s //h2`,
 				objVarName,
 				oalias.Columns[mapp.Column],
 				oSetter,
@@ -354,3 +367,9 @@ func getVarName(aliases Aliases, tableName string, local, foreign, many bool) st
 		return alias.DownSingular
 	}
 }
+
+type dummyImporter struct{}
+
+func (dummyImporter) Import(...string) string    { return "" }
+func (dummyImporter) ImportList([]string) string { return "" }
+func (dummyImporter) ToList() []string           { return nil }
