@@ -1,0 +1,44 @@
+{{$.Importer.Import "github.com/stephenafamo/bob"}}
+
+// Set the testDB to enable tests that use the database
+{{if eq $.Driver "github.com/jackc/pgx/v5" -}}
+{{- $.Importer.Import "bobpgx" "github.com/stephenafamo/bob/drivers/pgx" -}}
+var testDB bob.Transactor[bobpgx.Tx]
+{{- else -}}
+var testDB bob.Transactor[bob.Tx]
+{{- end}}
+
+{{range $table := .Tables}}
+	{{$tAlias := $.Aliases.Table $table.Key -}}
+  // Make sure the type {{$tAlias.UpSingular}} runs hooks after queries
+	var _ bob.HookableType = &{{$tAlias.UpSingular}}{}
+{{end}}
+
+{{$doneTypes := dict }}
+{{- range $table := .Tables}}
+{{- $tAlias := $.Aliases.Table $table.Key}}
+  {{range $column := $table.Columns -}}
+    {{/*
+    * We are in a test
+    * We know that the test is in a separate package
+    * We also know that there is no way to define a type that is ONLY used in tests
+    * So we use backslashes as the package name which will never match a package
+      to prevent assuming that the type is in the current package
+    */}}
+    {{- $colTyp := $.Types.GetWithoutImporting (index $.OutputPackages "models") $column.Type -}}
+    {{- if hasKey $doneTypes $column.Type}}{{continue}}{{end -}}
+    {{- $_ :=  set $doneTypes $column.Type nil -}}
+    {{- $typInfo :=  $.Types.Index $colTyp -}}
+    {{- if $typInfo.NoScannerValuerTest}}{{continue}}{{end -}}
+    {{- if isPrimitiveType $colTyp}}{{continue}}{{end -}}
+      {{$.Importer.ImportList $typInfo.Imports -}}
+      {{$.Importer.Import "database/sql"}}
+      {{$.Importer.Import "database/sql/driver"}}
+      // Make sure the type {{$colTyp}} satisfies database/sql.Scanner
+      var _ sql.Scanner = (*{{$colTyp}})(nil)
+
+      // Make sure the type {{$colTyp}} satisfies database/sql/driver.Valuer
+      var _ driver.Valuer = *new({{$colTyp}})
+
+  {{end -}}
+{{- end}}

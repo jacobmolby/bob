@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"io/fs"
+	"log"
 	"os"
-	"path/filepath"
 
-	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	"github.com/lib/pq"
 	"github.com/stephenafamo/bob/gen"
 	helpers "github.com/stephenafamo/bob/gen/bobgen-helpers"
@@ -16,8 +16,10 @@ import (
 	psqlDriver "github.com/stephenafamo/bob/gen/bobgen-psql/driver"
 	sqliteDriver "github.com/stephenafamo/bob/gen/bobgen-sqlite/driver"
 	"github.com/stephenafamo/bob/gen/drivers"
+	"github.com/stephenafamo/bob/gen/plugins"
 	"github.com/testcontainers/testcontainers-go"
 	mysqltest "github.com/testcontainers/testcontainers-go/modules/mysql"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
 type Config struct {
@@ -41,36 +43,36 @@ type Config struct {
 	fs      fs.FS
 }
 
-func RunPostgres(ctx context.Context, state *gen.State[any], config Config) error {
+func RunPostgres(ctx context.Context, state *gen.State[any], config Config, pluginsConfig plugins.Config) error {
 	d, err := getPsqlDriver(ctx, config)
 	if err != nil {
 		return fmt.Errorf("getting psql driver: %w", err)
 	}
 
-	return gen.Run(ctx, state, d)
+	plugins := plugins.Setup[any, any, psqlDriver.IndexExtra](pluginsConfig, gen.PSQLTemplates)
+
+	return gen.Run(ctx, state, d, plugins...)
 }
 
 func getPsqlDriver(ctx context.Context, config Config) (psqlDriver.Interface, error) {
-	port, err := helpers.GetFreePort()
+	postgresContainer, err := postgres.Run(
+		ctx, "pgvector/pgvector:0.8.0-pg16",
+		postgres.BasicWaitStrategies(),
+		testcontainers.WithLogger(log.New(io.Discard, "", log.LstdFlags)),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("could not get a free port: %w", err)
-	}
-
-	dbConfig := embeddedpostgres.
-		DefaultConfig().
-		RuntimePath(filepath.Join(os.TempDir(), "bobgen_sql")).
-		Port(uint32(port))
-	dsn := dbConfig.GetConnectionURL() + "?sslmode=disable"
-
-	postgres := embeddedpostgres.NewDatabase(dbConfig)
-	if err := postgres.Start(); err != nil {
-		return nil, fmt.Errorf("starting embedded postgres: %w", err)
+		return nil, fmt.Errorf("failed to start container: %w", err)
 	}
 	defer func() {
-		if err := postgres.Stop(); err != nil {
-			fmt.Println("Error stopping postgres:", err)
+		if err := testcontainers.TerminateContainer(postgresContainer); err != nil {
+			log.Printf("failed to terminate container: %s", err)
 		}
 	}()
+
+	dsn, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection string: %w", err)
+	}
 
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -95,13 +97,15 @@ func getPsqlDriver(ctx context.Context, config Config) (psqlDriver.Interface, er
 	return d, nil
 }
 
-func RunMySQL(ctx context.Context, state *gen.State[any], config Config) error {
+func RunMySQL(ctx context.Context, state *gen.State[any], config Config, pluginsConfig plugins.Config) error {
 	d, err := getMySQLDriver(ctx, config)
 	if err != nil {
 		return fmt.Errorf("getting mysql driver: %w", err)
 	}
 
-	return gen.Run(ctx, state, d)
+	plugins := plugins.Setup[any, any, any](pluginsConfig, gen.MySQLTemplates)
+
+	return gen.Run(ctx, state, d, plugins...)
 }
 
 func getMySQLDriver(ctx context.Context, config Config) (mysqlDriver.Interface, error) {
@@ -145,13 +149,15 @@ func getMySQLDriver(ctx context.Context, config Config) (mysqlDriver.Interface, 
 	return d, nil
 }
 
-func RunSQLite(ctx context.Context, state *gen.State[any], config Config) error {
+func RunSQLite(ctx context.Context, state *gen.State[any], config Config, pluginsConfig plugins.Config) error {
 	d, err := getSQLiteDriver(ctx, config)
 	if err != nil {
 		return fmt.Errorf("getting sqlite driver: %w", err)
 	}
 
-	return gen.Run(ctx, state, d)
+	plugins := plugins.Setup[any, any, sqliteDriver.IndexExtra](pluginsConfig, gen.SQLiteTemplates)
+
+	return gen.Run(ctx, state, d, plugins...)
 }
 
 func getSQLiteDriver(ctx context.Context, config Config) (sqliteDriver.Interface, error) {

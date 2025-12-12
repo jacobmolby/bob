@@ -29,13 +29,51 @@ var sqliteTemplates embed.FS
 
 //nolint:gochecknoglobals
 var (
-	ModelTemplates, _       = fs.Sub(templates, "templates/models")
-	FactoryTemplates, _     = fs.Sub(templates, "templates/factory")
-	QueriesTemplates, _     = fs.Sub(templates, "templates/queries")
-	MySQLModelTemplates, _  = fs.Sub(mysqlTemplates, "bobgen-mysql/templates/models")
-	PSQLModelTemplates, _   = fs.Sub(psqlTemplates, "bobgen-psql/templates/models")
-	SQLiteModelTemplates, _ = fs.Sub(sqliteTemplates, "bobgen-sqlite/templates/models")
+	BaseTemplates   = buildTemplatesFromKnownDirStructure(templates, "")
+	MySQLTemplates  = buildTemplatesFromKnownDirStructure(mysqlTemplates, "bobgen-mysql")
+	PSQLTemplates   = buildTemplatesFromKnownDirStructure(psqlTemplates, "bobgen-psql")
+	SQLiteTemplates = buildTemplatesFromKnownDirStructure(sqliteTemplates, "bobgen-sqlite")
 )
+
+func buildTemplatesFromKnownDirStructure(templates fs.FS, dir string) Templates {
+	if dir != "" {
+		templates, _ = fs.Sub(templates, dir)
+	}
+
+	DBInfoTemplates, _ := fs.Sub(templates, "templates/dbinfo")
+	EnumTemplates, _ := fs.Sub(templates, "templates/enums")
+	ModelTemplates, _ := fs.Sub(templates, "templates/models")
+	FactoryTemplates, _ := fs.Sub(templates, "templates/factory")
+	QueriesTemplates, _ := fs.Sub(templates, "templates/queries")
+	DBErrorTemplates, _ := fs.Sub(templates, "templates/dberrors")
+	WhereTemplates, _ := fs.Sub(templates, "templates/where")
+	LoadersTemplates, _ := fs.Sub(templates, "templates/loaders")
+	JoinsTemplates, _ := fs.Sub(templates, "templates/joins")
+
+	return Templates{
+		DBInfo:   DBInfoTemplates,
+		Enums:    EnumTemplates,
+		Models:   ModelTemplates,
+		Factory:  FactoryTemplates,
+		Queries:  QueriesTemplates,
+		DBErrors: DBErrorTemplates,
+		Where:    WhereTemplates,
+		Loaders:  LoadersTemplates,
+		Joins:    JoinsTemplates,
+	}
+}
+
+type Templates struct {
+	Enums    fs.FS
+	Models   fs.FS
+	Factory  fs.FS
+	Queries  fs.FS
+	DBErrors fs.FS
+	Where    fs.FS
+	Loaders  fs.FS
+	Joins    fs.FS
+	DBInfo   fs.FS
+}
 
 type TemplateData[T, C, I any] struct {
 	Dialect  string
@@ -55,7 +93,6 @@ type TemplateData[T, C, I any] struct {
 	PkgName string
 
 	// Control various generation features
-	NoFactory         bool
 	NoTests           bool
 	NoBackReferencing bool
 
@@ -105,19 +142,7 @@ var templateFunctions = template.FuncMap{
 	"generateTags":       strmangle.GenerateTags,
 	"generateIgnoreTags": strmangle.GenerateIgnoreTags,
 	"normalizeType":      NormalizeType,
-	"enumVal": func(val string) string {
-		var newval strings.Builder
-		for _, r := range val {
-			if r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) {
-				newval.WriteRune(r)
-				continue
-			}
-			newval.WriteString(fmt.Sprintf("U%x", r))
-		}
-
-		// Title case after doing unicode replacements or they will be stripped
-		return strmangle.TitleCase(newval.String())
-	},
+	"enumVal":            enumValToIdentifier,
 	"columnTagName": func(casing, name, alias string) string {
 		switch casing {
 		case "camel":
@@ -147,6 +172,24 @@ var templateFunctions = template.FuncMap{
 	},
 	"isPrimitiveType":    isPrimitiveType,
 	"relQueryMethodName": relQueryMethodName,
+}
+
+func enumValToIdentifier(val string) string {
+	val = strings.ToLower(val)
+	val = strings.ReplaceAll(val, "-", "_")
+	val = strings.ReplaceAll(val, " ", "_")
+
+	var newval strings.Builder
+	for _, r := range val {
+		if r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) {
+			newval.WriteRune(r)
+			continue
+		}
+		newval.WriteString(fmt.Sprintf("U%x", r))
+	}
+
+	// Title case after doing unicode replacements or they will be stripped
+	return strmangle.TitleCase(newval.String())
 }
 
 func relQueryMethodName(tAlias drivers.TableAlias, relAlias string) string {

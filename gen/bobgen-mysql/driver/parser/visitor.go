@@ -24,7 +24,6 @@ func NewVisitor(db tables) *visitor {
 			Names:     make(map[NodeKey]string),
 			Infos:     make(map[NodeKey]NodeInfo),
 			Functions: defaultFunctions,
-			Atom:      &atomic.Int64{},
 		},
 		querySources: make(map[antlrhelpers.NodeKey]QuerySource),
 	}
@@ -98,15 +97,30 @@ func (v *visitor) VisitTerminal(node antlr.TerminalNode) any {
 		}, name)
 	}
 
+	// if the parent token is "keywordsCanBeId", then we skip
+	// the replacement, because in that context the keyword is allowed
+	if parent := node.GetParent(); parent != nil {
+		if pctx, ok := parent.(antlr.RuleContext); ok {
+			if pctx.GetRuleIndex() == mysqlparser.MySqlParserRULE_keywordsCanBeId {
+				return nil
+			}
+		}
+	}
+
 	literals := mysqlparser.MySqlLexerLexerStaticData.LiteralNames
 	if token.GetTokenType() >= len(literals) {
 		return nil
 	}
 
+	// Literals are surrounded by single quotes
+	// so a valid literal is at least 3 characters long ('a')
+	// however, we are not interested in single character literals
+	// because they are usually symbols like commas, parentheses, etc.
 	literal := literals[token.GetTokenType()]
 	if len(literal) < 4 {
 		return nil
 	}
+
 	v.StmtRules = append(v.StmtRules, internal.Replace(
 		token.GetStart(),
 		token.GetStop(),
@@ -1765,6 +1779,17 @@ func (v *visitor) VisitSetQueryInParenthesis(ctx *mysqlparser.SetQueryInParenthe
 
 // VisitSetQueryPart implements parser.MySqlParserVisitor.
 func (v *visitor) VisitSetQueryPart(ctx *mysqlparser.SetQueryPartContext) any {
+	if single := ctx.SetQuery().SetQueryBase(); single != nil {
+		// Wrap the entire set query in parentheses to avoid issues
+		v.StmtRules = append(v.StmtRules, internal.Insert(
+			single.GetStart().GetStart(), "(",
+		))
+
+		v.StmtRules = append(v.StmtRules, internal.Insert(
+			single.GetStop().GetStop()+1, ")",
+		))
+	}
+
 	return v.VisitChildren(ctx)
 }
 
@@ -3624,15 +3649,15 @@ func (v *visitor) VisitBindExpressionAtom(ctx *mysqlparser.BindExpressionAtomCon
 
 	v.SetArg(ctx)
 	v.UpdateInfo(info)
-	v.StmtRules = append(v.StmtRules, internal.RecordPoints(
-		ctx.GetStart().GetStart(), ctx.GetStop().GetStop(),
-		func(start, end int) error {
+	v.StmtRules = append(v.StmtRules, internal.RecordPoint(
+		ctx.GetStart().GetStart(),
+		func(start int) error {
 			v.UpdateInfo(NodeInfo{
 				Node:           ctx,
-				EditedPosition: [2]int{start, end},
+				EditedPosition: [2]int{start, start + 1},
 			})
 			return nil
-		})...,
+		}),
 	)
 
 	return nil

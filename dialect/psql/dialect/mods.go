@@ -14,8 +14,8 @@ type Distinct struct {
 	On []any
 }
 
-func (di Distinct) WriteSQL(ctx context.Context, w io.Writer, d bob.Dialect, start int) ([]any, error) {
-	w.Write([]byte("DISTINCT"))
+func (di Distinct) WriteSQL(ctx context.Context, w io.StringWriter, d bob.Dialect, start int) ([]any, error) {
+	w.WriteString("DISTINCT")
 	return bob.ExpressSlice(ctx, w, d, start, di.On, " ON (", ", ", ")")
 }
 
@@ -215,6 +215,12 @@ func (j CrossJoinChain[Q]) As(alias string, columns ...string) bob.Mod[Q] {
 	return CrossJoinChain[Q](func() clause.Join {
 		return jo
 	})
+}
+
+type OrderCombined OrderBy[*SelectQuery]
+
+func (o OrderCombined) Apply(q *SelectQuery) {
+	q.CombinedOrder.AppendOrder(o())
 }
 
 type OrderBy[Q interface{ AppendOrder(bob.Expression) }] func() clause.OrderDef

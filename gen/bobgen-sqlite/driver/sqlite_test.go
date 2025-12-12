@@ -6,7 +6,6 @@ import (
 	"embed"
 	"flag"
 	"fmt"
-	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -42,7 +41,7 @@ func migrate(t *testing.T, db *sql.DB, schema embed.FS, pattern string) {
 	}
 }
 
-func TestAssembleLibSQL(t *testing.T) {
+func TestLibSQL(t *testing.T) {
 	ctx := context.Background()
 
 	libsqlServer, err := testcontainers.Run(
@@ -105,11 +104,11 @@ func TestAssembleLibSQL(t *testing.T) {
 			))
 		},
 		OverwriteGolden: *flagOverwriteGolden,
-		Templates:       &helpers.Templates{Models: []fs.FS{gen.SQLiteModelTemplates}},
+		Templates:       gen.SQLiteTemplates,
 	})
 }
 
-func TestAssembleSQLite(t *testing.T) {
+func TestSQLite(t *testing.T) {
 	ctx := context.Background()
 
 	dir, err := os.MkdirTemp("", "bobgen_sqlite_*")
@@ -215,7 +214,7 @@ func testSQLiteDriver(t *testing.T, config Config) {
 					))
 				},
 				OverwriteGolden: overwriteGolden,
-				Templates:       &helpers.Templates{Models: []fs.FS{gen.SQLiteModelTemplates}},
+				Templates:       gen.SQLiteTemplates,
 			})
 		})
 	}
@@ -317,7 +316,7 @@ func testSQLiteAssemble(t *testing.T, config Config) {
 				},
 				GoldenFile:      tt.goldenJson,
 				OverwriteGolden: overwriteGolden,
-				Templates:       &helpers.Templates{Models: []fs.FS{gen.SQLiteModelTemplates}},
+				Templates:       gen.SQLiteTemplates,
 			})
 		})
 	}

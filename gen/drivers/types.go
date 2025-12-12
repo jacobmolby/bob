@@ -3,6 +3,7 @@ package drivers
 import (
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -20,7 +21,7 @@ type Type struct {
 	// Any other types that this type depends on
 	DependsOn []string `yaml:"depends_on"`
 	// To be used in factory.random_type
-	// Use TYPE to reference the name of the type
+	// Use BASETYPE to reference the name of the type
 	// * A variable `f` of type `faker.Faker` is available
 	// * Another variable `limits` which is a slice of strings with any limits
 	//   for example, a VARCHAR(255) would have limits = ["255"]
@@ -81,12 +82,30 @@ type TypeModifier interface {
 	// When `fromOrToNull` is true
 	// * the `UseExpr` should convert the optional value to a non-optional but nullable value
 	// * the `CreateExpr` should convert a non-optional but nullable value to an optional value
-	OptionalType(typName string, def Type, isNull bool, fromOrToNull bool) (NullType, []string)
+	OptionalType(typName string, def Type, isNull, fromOrToNull bool) (NullType, []string)
 }
 
 type Types struct {
 	registered   map[string]Type
 	typeModifier TypeModifier
+}
+
+var outputImportRgex = regexp.MustCompile(`output\(([a-zA-Z0-9_]+)\)`)
+
+func (t *Types) SetOutputImports(pkgMap map[string]string) {
+	for name, typedef := range t.registered {
+		for j, imp := range typedef.Imports {
+			match := outputImportRgex.FindStringSubmatch(imp)
+			if len(match) != 2 {
+				continue
+			}
+
+			if pkg, ok := pkgMap[match[1]]; ok {
+				typedef.Imports[j] = fmt.Sprintf(`%s "%s"`, match[1], pkg)
+			}
+		}
+		t.registered[name] = typedef
+	}
 }
 
 func (t *Types) SetTypeModifier(creator TypeModifier) {
@@ -134,12 +153,12 @@ func (t Types) GetNullable(curr string, i language.Importer, namedType string, n
 	return nullTyp.Name
 }
 
-func (t Types) GetWithoutImporting(curr string, namedType string) string {
+func (t Types) GetWithoutImporting(curr, namedType string) string {
 	name, _ := t.GetNameAndDef(curr, namedType)
 	return name
 }
 
-func (t Types) GetNameAndDef(curr string, namedType string) (string, Type) {
+func (t Types) GetNameAndDef(curr, namedType string) (string, Type) {
 	var ok bool
 	typedef := Type{AliasOf: namedType}
 
@@ -152,18 +171,73 @@ func (t Types) GetNameAndDef(curr string, namedType string) (string, Type) {
 	}
 
 	if len(typedef.Imports) > 0 && strings.HasSuffix(typedef.Imports[0], `"`+curr+`"`) {
-		_, namedType, _ = strings.Cut(namedType, ".")
+		pkgAlias, _, found := strings.Cut(typedef.Imports[0], ` `)
+		if found {
+			pkgRgx := regexp.MustCompile(fmt.Sprintf(`(^|[^A-Za-z0-9_])%s\.`, pkgAlias))
+			namedType = pkgRgx.ReplaceAllStringFunc(namedType, func(s string) string {
+				return s[0 : len(s)-len(pkgAlias)-1]
+			})
+		}
 	}
 
 	return namedType, typedef
 }
 
-func (t Types) GetNullType(currentPkg string, forType string) NullType {
+func (t Types) GetCompareExpr(currentPkg string, i language.Importer, forType string, aNullable, bNullable bool) string {
+	_, typDef := t.GetNameAndDef(currentPkg, forType)
+	compareExpr := typDef.CompareExpr
+	if compareExpr == "" {
+		compareExpr = "AAA == BBB"
+	}
+	i.ImportList(typDef.CompareExprImports)
+
+	if !aNullable && !bNullable {
+		return compareExpr
+	}
+
+	nullTyp := t.GetNullType(currentPkg, forType)
+
+	aUse := "AAA"
+	if aNullable {
+		aUse = strings.NewReplacer(
+			"SRC", "AAA",
+			"BASETYPE", forType,
+			"NULLTYPE", nullTyp.Name,
+		).Replace(nullTyp.UseExpr)
+	}
+
+	bUse := "BBB"
+	if bNullable {
+		bUse = strings.NewReplacer(
+			"SRC", "BBB",
+			"BASETYPE", forType,
+			"NULLTYPE", nullTyp.Name,
+		).Replace(nullTyp.UseExpr)
+	}
+
+	compared := strings.NewReplacer("AAA", aUse, "BBB", bUse).Replace(compareExpr)
+
+	aValid := t.GetNullTypeValid(currentPkg, forType, "AAA")
+	bValid := t.GetNullTypeValid(currentPkg, forType, "BBB")
+
+	switch {
+	case aNullable && bNullable:
+		return fmt.Sprintf("%s == %s && %s && %s", aValid, bValid, aValid, compared)
+	case aNullable && !bNullable:
+		return fmt.Sprintf("%s && %s", aValid, compared)
+	case !aNullable && bNullable:
+		return fmt.Sprintf("%s && %s", bValid, compared)
+	default:
+		return compared
+	}
+}
+
+func (t Types) GetNullType(currentPkg, forType string) NullType {
 	typ, _ := t.GetNullTypeWithImports(currentPkg, forType)
 	return typ
 }
 
-func (t Types) GetNullTypeWithImports(currentPkg string, forType string) (NullType, []string) {
+func (t Types) GetNullTypeWithImports(currentPkg, forType string) (NullType, []string) {
 	name, def := t.GetNameAndDef(currentPkg, forType)
 
 	if def.NullType.Name != "" {
@@ -184,7 +258,7 @@ func (t Types) GetNullTypeWithImports(currentPkg string, forType string) (NullTy
 	return t.typeModifier.NullType(name), t.typeModifier.NullTypeImports(def)
 }
 
-func (t Types) GetNullTypeValid(currentPkg string, forType string, varName string) string {
+func (t Types) GetNullTypeValid(currentPkg, forType, varName string) string {
 	colTyp, _ := t.GetNameAndDef(currentPkg, forType)
 	nullTyp, _ := t.GetNullTypeWithImports(currentPkg, forType)
 	return strings.NewReplacer(
@@ -201,17 +275,17 @@ func (t Types) GetOptional(curr string, i language.Importer, namedType string, n
 	return opt
 }
 
-func (t Types) GetOptionalWithoutImporting(curr string, namedType string, null bool) NullType {
+func (t Types) GetOptionalWithoutImporting(curr, namedType string, null bool) NullType {
 	opt, _ := t.getOptional(curr, namedType, null, null)
 	return opt
 }
 
-func (t Types) getOptional(curr string, namedType string, isNull, fromOrToNull bool) (NullType, []string) {
+func (t Types) getOptional(curr, namedType string, isNull, fromOrToNull bool) (NullType, []string) {
 	name, def := t.GetNameAndDef(curr, namedType)
 	return t.typeModifier.OptionalType(name, def, isNull, fromOrToNull)
 }
 
-func (t Types) IsOptionalValid(currentPkg string, forType string, null bool, varName string) string {
+func (t Types) IsOptionalValid(currentPkg, forType string, null bool, varName string) string {
 	colTyp, _ := t.GetNameAndDef(currentPkg, forType)
 	optTyp, _ := t.getOptional(currentPkg, forType, null, null)
 	nullTyp := t.GetNullType(currentPkg, forType)
@@ -223,7 +297,7 @@ func (t Types) IsOptionalValid(currentPkg string, forType string, null bool, var
 	).Replace(optTyp.ValidExpr)
 }
 
-func (t Types) FromOptional(currentPkg string, i language.Importer, forType string, varName string, isNull, fromOrToNull bool) string {
+func (t Types) FromOptional(currentPkg string, i language.Importer, forType, varName string, isNull, fromOrToNull bool) string {
 	colTyp, _ := t.GetNameAndDef(currentPkg, forType)
 	optTyp, _ := t.getOptional(currentPkg, forType, isNull, fromOrToNull)
 	nullTyp := t.GetNullType(currentPkg, forType)
@@ -236,7 +310,7 @@ func (t Types) FromOptional(currentPkg string, i language.Importer, forType stri
 	).Replace(optTyp.UseExpr)
 }
 
-func (t Types) ToOptional(currentPkg string, i language.Importer, forType string, varName string, isNull, fromOrToNull bool) string {
+func (t Types) ToOptional(currentPkg string, i language.Importer, forType, varName string, isNull, fromOrToNull bool) string {
 	colTyp, _ := t.GetNameAndDef(currentPkg, forType)
 	optTyp, _ := t.getOptional(currentPkg, forType, isNull, fromOrToNull)
 	nullTyp := t.GetNullType(currentPkg, forType)

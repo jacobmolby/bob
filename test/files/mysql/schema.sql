@@ -208,13 +208,16 @@ CREATE TABLE multi_keys (
 	user_id INT NOT NULL,
 	sponsor_id INT UNIQUE,
 
-    something INT CHECK (something > 0),
+    something INT CHECK (something > 0 || something <= 0), -- Check constraint that is always true
     another INT,
     
   	one   int NULL,
 	two   int NOT NULL,
 
+    full_text_col LONGTEXT NOT NULL,
+
     UNIQUE(something, another),
+    FULLTEXT INDEX idx_full_text (full_text_col),
     FOREIGN KEY (one, two) REFERENCES type_monsters(int_one, int_two)
 );
 
@@ -250,3 +253,11 @@ CREATE TABLE bar_qux (
     id INT AUTO_INCREMENT PRIMARY KEY,
     secret_col VARCHAR(255) NOT NULL
 );
+
+CREATE TABLE query (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    query_text TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+

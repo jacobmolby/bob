@@ -1,51 +1,50 @@
 package driver
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	_ "embed"
 	"flag"
 	"fmt"
-	"io/fs"
+	"io"
+	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	_ "github.com/lib/pq"
 	"github.com/stephenafamo/bob/gen"
 	helpers "github.com/stephenafamo/bob/gen/bobgen-helpers"
 	"github.com/stephenafamo/bob/gen/drivers"
 	testfiles "github.com/stephenafamo/bob/test/files"
 	testgen "github.com/stephenafamo/bob/test/gen"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
 var flagOverwriteGolden = flag.Bool("overwrite-golden", false, "Overwrite the golden file with the current execution results")
 
 func TestDriver(t *testing.T) {
-	port, err := helpers.GetFreePort()
+	postgresContainer, err := postgres.Run(
+		t.Context(), "pgvector/pgvector:0.8.0-pg16",
+		postgres.BasicWaitStrategies(),
+		testcontainers.WithLogger(log.New(io.Discard, "", log.LstdFlags)),
+	)
 	if err != nil {
-		t.Fatalf("could not get a free port: %v", err)
+		fmt.Printf("could not start postgres container: %v\n", err)
+		return
 	}
-
-	dbConfig := embeddedpostgres.
-		DefaultConfig().
-		RuntimePath(filepath.Join(os.TempDir(), "bobgen_psql")).
-		Port(uint32(port)).
-		Logger(&bytes.Buffer{})
-	dsn := dbConfig.GetConnectionURL() + "?sslmode=disable"
-
-	postgres := embeddedpostgres.NewDatabase(dbConfig)
-	if err := postgres.Start(); err != nil {
-		t.Fatalf("starting embedded postgres: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := postgres.Stop(); err != nil {
-			t.Fatalf("could not stop postgres on port %d: %v", port, err)
+	defer func() {
+		if err := testcontainers.TerminateContainer(postgresContainer); err != nil {
+			log.Printf("failed to terminate container: %s", err)
 		}
-	})
+	}()
+
+	dsn, err := postgresContainer.ConnectionString(t.Context(), "sslmode=disable")
+	if err != nil {
+		fmt.Printf("could not get connection string: %v\n", err)
+		return
+	}
 
 	os.Setenv("PSQL_TEST_DSN", dsn)
 	db, err := sql.Open("postgres", dsn)
@@ -119,7 +118,7 @@ func testPostgresDriver(t *testing.T, dsn string) {
 
 			testgen.TestDriver(t, testgen.DriverTestConfig[any, any, IndexExtra]{
 				Root:      out,
-				Templates: &helpers.Templates{Models: []fs.FS{gen.PSQLModelTemplates}},
+				Templates: gen.PSQLTemplates,
 				GetDriver: func() drivers.Interface[any, any, IndexExtra] {
 					return New(testConfig)
 				},
@@ -213,7 +212,7 @@ func testPostgresAssemble(t *testing.T, dsn string) {
 
 			if i > 0 {
 				testgen.TestAssemble(t, testgen.AssembleTestConfig[any, any, IndexExtra]{
-					Templates: &helpers.Templates{Models: []fs.FS{gen.PSQLModelTemplates}},
+					Templates: gen.PSQLTemplates,
 					GetDriver: func() drivers.Interface[any, any, IndexExtra] {
 						return New(testConfig)
 					},
@@ -238,7 +237,7 @@ func testPostgresAssemble(t *testing.T, dsn string) {
 
 			testgen.TestDriver(t, testgen.DriverTestConfig[any, any, IndexExtra]{
 				Root:      out,
-				Templates: &helpers.Templates{Models: []fs.FS{gen.PSQLModelTemplates}},
+				Templates: gen.PSQLTemplates,
 				GetDriver: func() drivers.Interface[any, any, IndexExtra] {
 					return New(testConfig)
 				},

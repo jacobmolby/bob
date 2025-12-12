@@ -5,7 +5,119 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v0.42.0] - 2025-11-25
+
+### Fixed
+
+- Fixed a bug where the generated loaders for many-to-many relationships were skipping related rows. (thanks @TylerJGabb)
+
+### Added
+
+- Include `shell.nix` for developers using [Nix](https://nixos.org/) to create development environments. (thanks @EliRibble)
+- Additional README content on how developers can use linting and unit testing to contribute. (thanks @EliRibble)
+- Added `Plus` expression chain method (thanks @atzedus).
+
+### Changed
+
+- Export `orm.NullTypeConverter`. (thanks @Serjlee)
+- Uses `io.StringWriter` instead of `io.Writer` for efficiency since we are always writing strings.
+
+## [v0.41.1] - 2025-09-02
+
+### Fixed
+
+- Properly handle code generation tests for compound queries in MySQL.
+
+## [v0.41.0] - 2025-09-02
+
+### Added
+
+- `drivers/pgx.Pool` now includes the methods `Acquire` and `AcquireFunc` which mirror the methods in `pgx/v5/pgxpool` to acquire a connection from the pool (thanks @Eyal-Shalev).
+- Added the `drivers/pgx.PoolConn` type which is a wrapper around `pgx/v5/pgxpool.Conn`.
+
+### Changed
+
+- Use the full column type and not just the datatype as the `DBType` in bobgen-mysql.
+- `bob.Transactor` is now a generic interface so that implementations can use a concrete transaction type.
+- The data types generated for SQLite now follow SQLite's type affinity rules more closely (excluding some common names). As a result, all integer types are now mapped to `int64` and all floating point types are mapped to `float64`.
+
+### Fixed
+
+- Fixed an issue where `bobgen-mysql` could not detect unsigned integer columns in queries.
+- Properly close `pgx` transactions if the context used in `BeginTx` is cancelled.
+- Fix issues with generating code for relationships defined with `WhereExpr`.
+- Support `uint64` type when scanning columns as `types.Uint64`. This fixes scanning `BIGINT UNSIGNED` MySQL columns as `types.Uint64` when `interpolateParams` is enabled. (thanks @luiscleto)
+- Properly handle code generation tests for compound queries in MySQL.
+- Fix an issue where some ids are uppercased by the MySQL query code generator.
+
+## [v0.40.2] - 2025-08-16
+
+### Fixed
+
+- Fixed Scanner/Valuer test gen for types defined in the models package.
+- Fix issue with randomization test when enum is only used in an array.
+- Fix issue with using `CompareExpr` with values that are null.
+- Fix issue with imports in query tests.
+- Fix issue with detecting the columns in a CTE in `bobgen-psql`.
+- Properly detect the end of a function call in postgres qury parser.
+
+## [v0.40.1] - 2025-08-14
+
+### Fixed
+
+- Fixed bug in preloading
+
+## [v0.40.0] - 2025-08-13
+
+### Added
+
+- Made code generation modular by relying on built-in plugins that can be enabled or disabled in the configuration.
+  - `dbinfo`: Generates code for information about each database. Schemas, tables, columns, indexes, primary keys, foreign keys, unique constraints, and check constraints.
+  - `enums`: Generates code for enums in a separate package, if there are any present.
+  - `models`: Generates code for models. Depends on `enums`.
+  - `factory`: Generates code for factories. Depends on `models`.
+  - `dberrors`: Generates code for unique constraint errors. Depends on `models`.
+  - `where`: Generates type-safe code for `WHERE` clauses in queries. Depends on `models`.
+  - `loaders`: Adds templates to the `models` package to generate code for loaders e.g `models.SelectThenLoad.Table.Rel()`.
+  - `joins`: Adds templates to the `models` package to generate code for joins e.g `models.SelectJoin.Table.LeftJoin.Rel`.
+  - `queries`: Generates code for queries.
+- Added new `types.Uint64` type that sends values to the database as strings. This is necessary because using `uint64` directly can cause an overflow if the value exceeds the maximum value of an `int64`. This is a limitation imposed by `database/sql/driver.Valuer` interface.
+- Added support for `pgvector` types during code generation.
+  - `pgvector.Vector`
+  - `pgvector.HalfVector`
+  - `pgvector.SparseVector`
+
+### Changed
+
+- Enums are now imported directly from a new generated `enums` package. This makes it easier to use enums in other packages without having to depend on the `models` package.
+- Preload functions now take a custom `orm.PreloadRel` struct instead of reusing `orm.Relationship`.
+- By default, factories are now generated in `./factory` instead of `./models/factory`.
+- Outputs are now determined by plugins which can be enabled or disabled in the configuration.
+- UniqueConstraintErrors are now generated in a separate `dberrors` package instead of being generated in the `models` package.
+- Tests in the generated `models` package are no longer generated in a separate `models_test` package. There is no longer any circular dependency since tests for the unique constraint errors are generated in the `dberrors` package.
+- `orm.Columns` has been moved to `expr.ColumnsExpr`.
+- `orm.NewColumns` has been moved to `expr.NewColumnsExpr`.
+- `<Table>.Columns()` is removed. The columns expression is now expected to be embedded in the `Columns` field of the `<Table>` struct.
+- `<dialect>.View` and `<dialect>.Table` now take an additional type parameter for the columns type. This is assigned to the `Columns` field with `NewView/NewTable` functions.
+
+### Removed
+
+- Removed the `no_factory` configuration option. It is now replaced with the `factory` plugin which can be enabled or disabled. See <https://bob.stephenafamo.com/docs/code-generation/configuration#plugins-configuration> for more details.
+- Removed the `Only` and `Except` exported functions in `orm`. They are now in the private `internal` package.
+- Removed the generated `models.<Model>Columns` global variable. It can now be accessed through `models.<Table>.Columns`.
+- Removed the generated `models.TableNames` and `models.ColumnNames` global variables. Their use can be replaced with the `dbinfo` plugin which generates a `dbinfo` package with all the information about the database.
+
+### Fixed
+
+- Fixed issue with redundant title casing column names in query templates. (thanks @luiscleto)
+- Fix invalid expression with pointer-based type systems. (thanks @tak848)
+- Fix panic when parsing SQLite `UPDATE` queries that do not contain a `FROM` clause.
+- Fix issue when using enums in generated queries.
+- Fix randomization of floats and decimals in the factory.
+- Fix JSON data being incorrectly hex-encoded as bytea when using pgx through simple protocol, causing PostgreSQL to reject it with invalid input syntax errors. (by @Maxitosh)
+- Fix issue with preload queries not using a defined schema on the related tables
+
+## [v0.39.0] - 2025-07-28
 
 ### Added
 
@@ -16,12 +128,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - columns with dots (`.`) are assumed to be a `to-many` nested field.
   - columns with double underscores (`__`) are assumed to be a `to-one` nested field.
 - Implement `--prefix` annotation in queries for `bobgen-psql`.
+- Add FromExisting**Rel** method to factories to create a template from an existing model. (thanks @dutow)
+- Add WithExisting**Rel** to factory mods to attach an existing model as a relationship. (thanks @dutow)
+- Added support in psql for combined args (order by, limit etc.) in combined queries and use parens if they are present. (@iwyrkore)
+- Added parens for combined queries. (@iwyrkore)
+- Match columns using regular expressions in type replacements. This is useful for e.g. matching columns that have a common prefix or suffix. (thanks @abdusco)
 
 ### Changed
 
 - `Mod` is now a separate field in `orm.ModQuery` and `orm.ModExecQuery`.
 - `Allx` now takes a `Transformer` type parameter to transform the result of the query.
 - Updated documentation for readability, added code gen examples. (thanks @singhsays)
+- Columns are now matched in a case-insensitive manner in type replacements. (thanks @abdusco)
+- Columns can now be matched with as many conditions as needed in type replacements. This removes the previous requirement that boolean fields had to be specified in addition to a string field. (thanks @abdusco)
+- Factories now expose a `NewXWithContext` that accepts a context in addition to `NewX` that does not. This provides a cleaner API for the callers, while still allowing the use of context internally. (thanks @abdusco)
 
 ### Removed
 
@@ -32,6 +152,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed some issues with creating relationships in the factory by avoiding trying to reuse models.
 - Fix issues with generating code for queries with duplicate return column names.
 - Updated gen table detail queries to use context. (thanks @singhsays)
+- Properly detect `bool`, `timestamp` and `timestamptz` types in `bobgen-psql`.
+- Fix transformer for single result queries.
+- Properly handle indexes where the sorting order can be null.
+- Check for nullability when loading relationships.
+- Handle table names quoted with backticks in mysql query parser. (thanks @luiscleto)
+- Allow matching columns in type replacements by the `autoincr` property as stated in the docs. (thanks @abdusco)
+- Handle dashes and spaces in generated enum values properly (thanks @abdusco)
+- Check for nullability when loading relationships from Slices (thanks @felipeparaujo)
 
 ## [v0.38.0] - 2025-06-04
 
@@ -133,7 +261,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added tests to check that the generated factory can create models and save into the database.
 - Added the `pgtypes.Snapshot` type for the `pg_snapshot` and `txid_snapshot` type in PostgreSQL.
 - Added a custom `Time` type to the `types` package. This is motivated by the fact that the `libsql` driver does not support the `time.Time` type properly.
-- Added an option to disable aliasing when expressing `orm.Columns`. Also added `EnableAlias` and `DisableAlias` methods to `orm.Columns` to control this behavior.
+- Added an option to disable aliasing when expressing `expr.Columns`. Also added `EnableAlias` and `DisableAlias` methods to `expr.Columns` to control this behavior.
 - Added a `PrimaryKey` method to `{dialect}.Table` to get the primary key columns of the table.
 
 ### Changed
@@ -497,7 +625,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add PreloadAs PreloadOption to override the join alias when preloading a relationship with a left join. (thanks @daddz)
 - Add `AliasedAs()` method to `tableColumns` and `tableWhere` types to use a custom alias.
 - Add `AliasedAs()` method to generated relationship join mods. This is avaible in two places:
-
   - one to change the alias of the table being queried
 
     ```go

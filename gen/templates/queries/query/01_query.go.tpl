@@ -30,7 +30,7 @@ var formattedQueries_{{.QueryFile.BaseName}} string
 {{end}}
 
 {{$queryResultTransformer := printf "%sTransformer" $lowerName}}
-{{if not (list "" "slice"| has $query.Config.ResultTransformer)}}
+{{if not (list "" "slice" | has $query.Config.ResultTransformer)}}
   {{$queryResultTransformer = $.Types.Get $.CurrentPackage $.Importer $query.Config.ResultTransformer}}
 {{end}}
 
@@ -40,7 +40,7 @@ var formattedQueries_{{.QueryFile.BaseName}} string
 {{if eq (len $query.Columns) 1}}
   {{$col := index $query.Columns 0}}
   {{$colType := $col.Type $.CurrentPackage $.Importer $.Types}}
-  {{$colParams =  printf "%s, %s" $colType (or $query.Config.ResultTypeAll (printf "[]%s" $colType)) }}
+  {{$colParams =  printf "%s, %s, %s" $colType (or $query.Config.ResultTypeAll (printf "[]%s" $colType)) $queryResultTransformer }}
 {{end}}
 
 var {{$lowerName}}SQL = formattedQueries_{{$.QueryFile.BaseName}}[{{$.QueryFile.QueryPosition $queryIndex (len $.Language.Disclaimer)}}]
@@ -56,7 +56,7 @@ var {{$lowerName}}SQL = formattedQueries_{{$.QueryFile.BaseName}}[{{$.QueryFile.
 
   {{if gt (len $arg.Children) 0}}
     {{ $argType = printf "%s_%s" $upperName $argName }}
-    type {{$argType}} = {{$arg.TypeDef $.CurrentPackage $.Importer $.Types}}
+    type {{$argType}} = {{$arg.TypeDef $.CurrentPackage $.Importer $.Types true}}
     {{if $arg.CanBeMultiple}}
       {{ $argType = printf "[]%s" $argType }}
     {{end}}
@@ -98,7 +98,7 @@ func {{$upperName}} ({{join ", " $args}}) *{{$upperName}}Query {
             return func(row *scan.Row) (any, error) {
                 var t {{$queryResultTypeOne}}
                 {{range $colIndex, $col := $query.Columns.WithNames -}}
-                  row.ScheduleScanByIndex({{$colIndex}}, &t.{{titleCase $col.Name}})
+                  row.ScheduleScanByIndex({{$colIndex}}, &t.{{$col.Name}})
                 {{end -}}
                 return &t, nil
               }, func(v any) ({{$queryResultTypeOne}}, error) {
@@ -169,7 +169,13 @@ func {{$upperName}} ({{join ", " $args}}) *{{$upperName}}Query {
     {{end}}
 
   {{else if (list "" "slice"| has $query.Config.ResultTransformer)}}
-    type {{$lowerName}}Transformer = {{printf "bob.SliceTransformer[%s, %s]" $queryResultTypeOne $queryResultTypeAll}}
+    {{if eq (len $query.Columns) 1}}
+      {{$col := index $query.Columns 0}}
+      {{$colType := $col.Type $.CurrentPackage $.Importer $.Types}}
+      type {{$lowerName}}Transformer = {{printf "bob.SliceTransformer[%s, %s]" $colType (or $query.Config.ResultTypeAll (printf "[]%s" $colType))}}
+    {{else}}
+      type {{$lowerName}}Transformer = {{printf "bob.SliceTransformer[%s, %s]" $queryResultTypeOne $queryResultTypeAll}}
+    {{end}}
   {{end}}
 {{end}}
 
@@ -202,7 +208,7 @@ func (o {{$lowerName}}) subExpr(from, to int) bob.Expression {
   return orm.ArgsToExpression({{$lowerName}}SQL, from, to, o.args())
 }
 
-func (o {{$lowerName}}) WriteSQL(ctx context.Context, w io.Writer, d bob.Dialect, start int) ([]any, error) {
+func (o {{$lowerName}}) WriteSQL(ctx context.Context, w io.StringWriter, d bob.Dialect, start int) ([]any, error) {
 	return o.subExpr(0, len({{$lowerName}}SQL)).WriteSQL(ctx, w, d, start)
 }
 

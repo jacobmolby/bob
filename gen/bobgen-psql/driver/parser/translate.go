@@ -71,9 +71,12 @@ func (t *Translator) TranslateColumnType(c drivers.Column, info ColInfo) drivers
 		c.Type = "string" // should be a single character, but we treat it as a string
 	case "bytea":
 		c.Type = "[]byte"
-	case "boolean":
+	case "bool", "boolean":
 		c.Type = "bool"
-	case "date", "time", "timestamp without time zone", "timestamp with time zone", "time without time zone", "time with time zone":
+	case "date", "time",
+		"timestamp", "timestamp without time zone",
+		"timestamptz", "timestamp with time zone",
+		"time with time zone", "time without time zone":
 		c.Type = "time.Time"
 	case "box":
 		c.Type = "pgeo.Box"
@@ -115,16 +118,24 @@ func (t *Translator) TranslateColumnType(c drivers.Column, info ColInfo) drivers
 		var dbType string
 		c.Type, dbType = t.getArrayType(info)
 		c.DBType = dbType + "[]"
-	default:
+
+	case "USER-DEFINED":
+		c.DBType = info.UDTName
 		switch info.UDTName {
 		case "hstore":
 			c.Type = "pgtypes.HStore"
-			c.DBType = "hstore"
-		case "citext":
-			c.Type = "string"
+		case "vector":
+			c.Type = "pgvector.Vector"
+		case "halfvec":
+			c.Type = "pgvector.HalfVector"
+		case "sparsevec":
+			c.Type = "pgvector.SparseVector"
 		default:
 			c.Type = "string"
 		}
+
+	default:
+		c.Type = "string"
 	}
 
 	return c
@@ -176,21 +187,21 @@ func (t *Translator) addPgEnumArrayType(types drivers.Types, enumTyp string) str
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	arrTyp := fmt.Sprintf("pgtypes.EnumArray[%s]", enumTyp)
+	arrTyp := fmt.Sprintf("pgtypes.EnumArray[enums.%s]", enumTyp)
 
 	// premptively add the enum type
 	// this is to prevent issues if the enum is only used in an array
-	helpers.EnumType(types, enumTyp)
+	fullEnumTyp := helpers.EnumType(types, enumTyp)
 
 	types.Register(arrTyp, drivers.Type{
-		DependsOn:           []string{enumTyp},
-		Imports:             []string{pgtypesImport},
+		DependsOn:           []string{fullEnumTyp},
+		Imports:             []string{"output(enums)", pgtypesImport},
 		NoRandomizationTest: true, // enums are often not random enough
 		RandomExpr: fmt.Sprintf(`arr := make(%s, f.IntBetween(1, 5))
             for i := range arr {
                 arr[i] = random_%s(f, limits...)
             }
-            return arr`, arrTyp, gen.NormalizeType(enumTyp)),
+            return arr`, arrTyp, gen.NormalizeType(fullEnumTyp)),
 	})
 
 	return arrTyp

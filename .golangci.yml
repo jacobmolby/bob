@@ -31,7 +31,9 @@ linters:
     errcheck:
       exclude-functions:
         - (io.Writer).Write
+        - (io.StringWriter).WriteString
         - (*text/template.Template).Parse
+        - (github.com/jackc/pgx/v5.Tx).Rollback
     revive:
       rules:
         - name: receiver-naming
@@ -50,21 +52,19 @@ linters:
           - gocyclo
           - gosec
           - nilnil
+          - maintidx
         path: _test\.go
       - path: (.+)\.go$
         text: G115
       - linters: [staticcheck]
         text: "QF1008:"
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
 formatters:
   enable:
     - gofumpt
   exclusions:
-    generated: lax
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
+    generated: strict
+  settings:
+    gofumpt:
+      # Choose whether to use the extra rules.
+      # Default: false
+      extra-rules: true

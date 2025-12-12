@@ -3,6 +3,7 @@ package language
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -90,7 +91,7 @@ func (g goOutputLanguage) endsWithSpecialSuffix(tableName string) bool {
 
 func (g goOutputLanguage) Write(
 	imps Importer,
-	pkgName string, folder string,
+	pkgName, folder string,
 	contents io.Reader, inTest bool,
 	destination io.Writer,
 ) error {
@@ -237,7 +238,7 @@ func findGoMod(path string) (string, error) {
 		return "", fmt.Errorf("could not create destination folder %q: %w", path, err)
 	}
 
-	c := exec.Command("go", "env", "GOMOD")
+	c := exec.CommandContext(context.Background(), "go", "env", "GOMOD")
 	c.Stdout = &outData
 	c.Stderr = &errData
 	c.Dir = path

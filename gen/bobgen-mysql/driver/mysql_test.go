@@ -6,7 +6,6 @@ import (
 	_ "embed"
 	"flag"
 	"fmt"
-	"io/fs"
 	"os"
 	"testing"
 
@@ -71,10 +70,12 @@ func TestDriver(t *testing.T) {
 		name       string
 		only       map[string][]string
 		except     map[string][]string
+		queries    []string
 		goldenJson string
 	}{
 		{
 			name:       "default",
+			queries:    []string{"./queries"},
 			goldenJson: "mysql.golden.json",
 		},
 		{
@@ -138,9 +139,10 @@ func TestDriver(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			testConfig := Config{
 				Config: helpers.Config{
-					Dsn:    dsn,
-					Only:   tt.only,
-					Except: tt.except,
+					Dsn:     dsn,
+					Only:    tt.only,
+					Except:  tt.except,
+					Queries: tt.queries,
 				},
 			}
 
@@ -151,7 +153,7 @@ func TestDriver(t *testing.T) {
 					},
 					GoldenFile:      tt.goldenJson,
 					OverwriteGolden: *flagOverwriteGolden,
-					Templates:       &helpers.Templates{Models: []fs.FS{gen.MySQLModelTemplates}},
+					Templates:       gen.MySQLTemplates,
 				})
 				return
 			}
@@ -176,7 +178,7 @@ func TestDriver(t *testing.T) {
 				},
 				GoldenFile:      tt.goldenJson,
 				OverwriteGolden: *flagOverwriteGolden,
-				Templates:       &helpers.Templates{Models: []fs.FS{gen.MySQLModelTemplates}},
+				Templates:       gen.MySQLTemplates,
 			})
 		})
 	}

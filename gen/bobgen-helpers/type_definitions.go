@@ -47,6 +47,10 @@ func Types() drivers.Types {
 		"uint64": {
 			RandomExpr: `return f.UInt64()`,
 		},
+		"types.Uint64": {
+			Imports:    []string{`"github.com/stephenafamo/bob/types"`},
+			RandomExpr: `return BASETYPE(f.UInt64())`,
+		},
 		"float32": {
 			RandomExpr: `
 				var precision int64 = 5 
@@ -60,9 +64,14 @@ func Types() drivers.Types {
 					scale, _ = strconv.ParseInt(limits[1], 10, 32)
 				}
 
+				baseVal := f.Float64(10, -1, 1)
+				for baseVal == -1 || baseVal == 0 || baseVal == 1 {
+					baseVal = f.Float64(10, -1, 1)
+				}
+
 				scaleFloat := math.Pow10(int(scale))
 
-				val := f.Float64(10, -1, 1)*math.Pow10(int(precision))
+				val := baseVal*math.Pow10(int(precision))
 				val = math.Trunc(val)/scaleFloat
 
 				return float32(val)
@@ -82,9 +91,14 @@ func Types() drivers.Types {
 					scale, _ = strconv.ParseInt(limits[1], 10, 32)
 				}
 
+				baseVal := f.Float64(10, -1, 1)
+				for baseVal == -1 || baseVal == 0 || baseVal == 1 {
+					baseVal = f.Float64(10, -1, 1)
+				}
+
 				scaleFloat := math.Pow10(int(scale))
 
-				val := f.Float64(10, -1, 1)*math.Pow10(int(precision))
+				val := baseVal*math.Pow10(int(precision))
 				val = math.Trunc(val)/scaleFloat
 
 				return val
@@ -280,11 +294,65 @@ func Types() drivers.Types {
 			CompareExpr:        `slices.Equal(AAA, BBB)`,
 			CompareExprImports: []string{`"slices"`},
 		},
+		"pgvector.Vector": {
+			DependsOn: []string{"float32"},
+			Imports:   []string{`pgvector "github.com/pgvector/pgvector-go"`},
+			RandomExpr: `
+				var dims int64 = f.Int64Between(1, 5)
+				if len(limits) > 0 {
+					dims, _ = strconv.ParseInt(limits[0], 10, 32)
+				}
+
+				arr := make([]float32, dims)
+                for i := range arr {
+                    arr[i] = random_float32(f)
+                }
+
+                return pgvector.NewVector(arr)`,
+			CompareExpr:        `slices.Equal(AAA.Slice(), BBB.Slice())`,
+			CompareExprImports: []string{`"slices"`},
+		},
+		"pgvector.HalfVector": {
+			DependsOn: []string{"float32"},
+			Imports:   []string{`pgvector "github.com/pgvector/pgvector-go"`},
+			RandomExpr: `
+				var dims int64 = f.Int64Between(1, 5)
+				if len(limits) > 0 {
+					dims, _ = strconv.ParseInt(limits[0], 10, 32)
+				}
+
+				arr := make([]float32, dims)
+                for i := range arr {
+                    arr[i] = random_float32(f)
+                }
+
+                return pgvector.NewHalfVector(arr)`,
+			CompareExpr:        `slices.Equal(AAA.Slice(), BBB.Slice())`,
+			CompareExprImports: []string{`"slices"`},
+		},
+		"pgvector.SparseVector": {
+			DependsOn: []string{"float32"},
+			Imports:   []string{`pgvector "github.com/pgvector/pgvector-go"`},
+			RandomExpr: `
+				var dims int64 = f.Int64Between(1, 5)
+				if len(limits) > 0 {
+					dims, _ = strconv.ParseInt(limits[0], 10, 32)
+				}
+
+				arr := make([]float32, dims)
+                for i := range arr {
+                    arr[i] = random_float32(f)
+                }
+
+                return pgvector.NewSparseVector(arr)`,
+			CompareExpr:        `slices.Equal(AAA.Slice(), BBB.Slice())`,
+			CompareExprImports: []string{`"slices"`},
+		},
 		"decimal.Decimal": {
 			Imports: []string{`"github.com/shopspring/decimal"`},
 			RandomExpr: `
-			var precision int64 = 5 
-			var scale int64 = 2 
+			var precision int64 = 7
+			var scale int64 = 3 
 
 			if len(limits) > 0 {
 				precision, _ = strconv.ParseInt(limits[0], 10, 32)
@@ -294,12 +362,19 @@ func Types() drivers.Types {
 				scale, _ = strconv.ParseInt(limits[1], 10, 32)
 			}
 
+			baseVal := f.Float32(10, -1, 1)
+			for baseVal == -1 || baseVal == 0 || baseVal == 1 {
+				baseVal = f.Float32(10, -1, 1)
+			}
+
 			precisionDecimal, _ := decimal.NewFromInt(10).PowInt32(int32(precision))
-			return decimal.
-				NewFromFloat32(f.Float32(10, -1, 1)).
+			val := decimal.
+				NewFromFloat32(baseVal).
 				Mul(precisionDecimal).
 				Shift(int32(-1 * scale)).
 				RoundDown(int32(scale))
+
+			return val
 			`,
 			RandomExprImports: []string{`"strconv"`},
 			CompareExpr:       `AAA.Equal(BBB)`,

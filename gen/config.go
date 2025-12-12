@@ -17,8 +17,6 @@ type Config[ConstraintExtra any] struct {
 	TypeSystem string `yaml:"type_system"`
 	// Struct tags to generate
 	Tags []string `yaml:"tags"`
-	// Disable generating factories for models
-	NoFactory bool `yaml:"no_factory"`
 	// Disable generating go test files
 	NoTests bool `yaml:"no_tests"`
 	// Disable back referencing in the loaded relationship structs
@@ -46,9 +44,87 @@ type Config[ConstraintExtra any] struct {
 
 // Replace replaces a column type with something else
 type Replace struct {
-	Tables  []string       `yaml:"tables"`
-	Match   drivers.Column `yaml:"match"`
-	Replace string         `yaml:"replace"`
+	Tables  []string     `yaml:"tables"`
+	Match   ColumnFilter `yaml:"match"`
+	Replace string       `yaml:"replace"`
+}
+
+// ColumnFilter is used to filter columns in the config file.
+// It should mirror the fields of drivers.Column
+type ColumnFilter struct {
+	Name      *string `yaml:"name"`
+	DBType    *string `yaml:"db_type"`
+	Type      *string `yaml:"type"`
+	Default   *string `yaml:"default"`
+	Comment   *string `yaml:"comment"`
+	Nullable  *bool   `yaml:"nullable"`
+	Generated *bool   `yaml:"generated"`
+	AutoIncr  *bool   `yaml:"autoincr"`
+
+	// DomainName is the domain type name associated to the column. See here:
+	// https://www.postgresql.org/docs/16/extend-type-system.html
+	DomainName *string `yaml:"domain_name"`
+}
+
+func (f ColumnFilter) IsEmpty() bool {
+	return f.Name == nil &&
+		f.DBType == nil &&
+		f.Type == nil &&
+		f.Default == nil &&
+		f.Comment == nil &&
+		f.Nullable == nil &&
+		f.Generated == nil &&
+		f.AutoIncr == nil &&
+		f.DomainName == nil
+}
+
+// Matches determines if a drivers.Column matches all the specified criteria (logical AND).
+//
+// String fields are matched case-insensitively and by regex.
+func (f ColumnFilter) Matches(column drivers.Column) bool {
+	// empty filters should not match anything
+	if f.IsEmpty() {
+		return false
+	}
+
+	if val := f.Name; val != nil && !matchString(*val, column.Name) {
+		return false
+	}
+
+	if val := f.DBType; val != nil && !matchString(*val, column.DBType) {
+		return false
+	}
+
+	if val := f.Type; val != nil && !matchString(*val, column.Type) {
+		return false
+	}
+
+	if val := f.Default; val != nil && !matchString(*val, column.Default) {
+		return false
+	}
+
+	if val := f.Comment; val != nil && !matchString(*val, column.Comment) {
+		return false
+	}
+
+	if val := f.DomainName; val != nil && !matchString(*val, column.DomainName) {
+		return false
+	}
+
+	if val := f.Nullable; val != nil && *val != column.Nullable {
+		return false
+	}
+
+	if val := f.Generated; val != nil && *val != column.Generated {
+		return false
+	}
+
+	if val := f.AutoIncr; val != nil && *val != column.AutoIncr {
+		return false
+	}
+
+	// all specified conditions matched
+	return true
 }
 
 type Inflections struct {

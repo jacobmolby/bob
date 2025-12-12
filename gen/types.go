@@ -2,7 +2,9 @@ package gen
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/stephenafamo/bob/gen/drivers"
 )
@@ -33,7 +35,7 @@ func processTypeReplacements[C, I any](types drivers.Types, replacements []Repla
 
 			for j := range t.Columns {
 				c := t.Columns[j]
-				if matchColumn(c, r.Match) {
+				if r.Match.Matches(c) {
 					didMatch = true
 
 					if ok := types.Contains(r.Replace); !ok && !isPrimitiveType(r.Replace) {
@@ -48,60 +50,31 @@ func processTypeReplacements[C, I any](types drivers.Types, replacements []Repla
 		// Print a warning if we didn't match anything
 		if !didMatch {
 			c := r.Match
-			fmt.Printf(
-				"WARNING: No match found for replacement:\nname: %s\ndb_type: %s\ndefault: %s\ncomment: %s\nnullable: %t\ngenerated: %t\nautoincr: %t\ndomain_name: %s\n",
-				c.Name, c.DBType, c.Default, c.Comment, c.Nullable, c.Generated, c.AutoIncr, c.DomainName)
+			fmt.Printf("WARNING: No match found for replacement: %+v\n", c)
 		}
 	}
 }
 
-// matchColumn checks if a column 'c' matches specifiers in 'm'.
-// Anything defined in m is checked against a's values, the
-// match is a done using logical and (all specifiers must match).
-// Bool fields are only checked if a string type field matched first
-// and if a string field matched they are always checked (must be defined).
-//
-// Doesn't care about Unique columns since those can vary independent of type.
-func matchColumn(c, m drivers.Column) bool {
-	matchedSomething := false
-
-	// return true if we matched, or we don't have to match
-	// if we actually matched against something, then additionally set
-	// matchedSomething so we can check boolean values too.
-	matches := func(matcher, value string) bool {
-		if len(matcher) != 0 && matcher != value {
-			return false
+// matchString reports whether string a matches a pattern.
+// Pattern a can be either a literal string (case-insensitive comparison)
+// or a regular expression enclosed with / slashes.
+// Regex patterns are automatically made case-insensitive.
+func matchString(pattern, candidate string) bool {
+	stringPatterns, regexPatterns := drivers.ClassifyPatterns([]string{pattern})
+	for _, pattern := range stringPatterns {
+		if strings.EqualFold(pattern, candidate) {
+			return true
 		}
-		matchedSomething = true
-		return true
 	}
 
-	if !matches(m.Name, c.Name) {
-		return false
-	}
-	if !matches(m.Type, c.Type) {
-		return false
-	}
-	if !matches(m.DBType, c.DBType) {
-		return false
+	for _, pattern := range regexPatterns {
+		caseInsensitivePattern := "(?i)" + pattern
+		if matched, _ := regexp.MatchString(caseInsensitivePattern, candidate); matched {
+			return true
+		}
 	}
 
-	if !matches(m.DomainName, c.DomainName) {
-		return false
-	}
-	if !matches(m.Comment, c.Comment) {
-		return false
-	}
-
-	if !matchedSomething {
-		return false
-	}
-
-	if m.Generated != c.Generated {
-		return false
-	}
-
-	return true
+	return false
 }
 
 // shouldReplaceInTable checks if tables were specified in types.match in the config.

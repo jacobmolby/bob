@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/aarondl/opt/null"
 	"github.com/go-sql-driver/mysql"
 	helpers "github.com/stephenafamo/bob/gen/bobgen-helpers"
 	"github.com/stephenafamo/bob/gen/bobgen-mysql/driver/parser"
@@ -113,7 +114,7 @@ func (d *driver) TablesInfo(ctx context.Context, tableFilter drivers.Filter) (dr
 
 	if len(include) > 0 {
 		var subqueries []string
-		stringPatterns, regexPatterns := tableFilter.ClassifyPatterns(include)
+		stringPatterns, regexPatterns := drivers.ClassifyPatterns(include)
 		if len(stringPatterns) > 0 {
 			subqueries = append(subqueries, fmt.Sprintf("table_name in (%s)", strmangle.Placeholders(false, len(stringPatterns), 1, 1))) // third param is not used for ? placeholders
 			for _, w := range stringPatterns {
@@ -129,7 +130,7 @@ func (d *driver) TablesInfo(ctx context.Context, tableFilter drivers.Filter) (dr
 
 	if len(exclude) > 0 {
 		var subqueries []string
-		stringPatterns, regexPatterns := tableFilter.ClassifyPatterns(exclude)
+		stringPatterns, regexPatterns := drivers.ClassifyPatterns(exclude)
 		if len(stringPatterns) > 0 {
 			subqueries = append(subqueries, fmt.Sprintf("table_name not in (%s)", strmangle.Placeholders(false, len(stringPatterns), 1, 1))) // third param is not used for ? placeholders
 			for _, w := range stringPatterns {
@@ -161,7 +162,6 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
     c.column_name,
     c.column_type,
     c.column_comment,
-    c.data_type,
     c.column_default,
     c.extra = 'auto_increment' AS autoincr,
     c.is_nullable = 'YES' AS nullable,
@@ -192,21 +192,17 @@ func (d *driver) TableDetails(ctx context.Context, info drivers.TableInfo, colFi
 	defer rows.Close()
 
 	for rows.Next() {
-		var colName, colFullType, colComment, colType string
+		var colName, colFullType, colComment string
 		var autoIncr, nullable, generated bool
 		var defaultValue *string
-		if err := rows.Scan(&colName, &colFullType, &colComment, &colType, &defaultValue, &autoIncr, &nullable, &generated); err != nil {
+		if err := rows.Scan(&colName, &colFullType, &colComment, &defaultValue, &autoIncr, &nullable, &generated); err != nil {
 			return "", "", nil, fmt.Errorf("unable to scan for table %s: %w", tableName, err)
-		}
-
-		if colFullType == "tinyint(1)" {
-			colType = "bool"
 		}
 
 		column := drivers.Column{
 			Name:      colName,
 			Comment:   colComment,
-			DBType:    colType,
+			DBType:    colFullType,
 			Nullable:  nullable,
 			Generated: generated,
 			AutoIncr:  autoIncr,
@@ -361,7 +357,7 @@ func (d *driver) Indexes(ctx context.Context) (drivers.DBIndexes[any], error) {
 		ColumnName sql.NullString
 		Expression sql.NullString
 		IsUnique   bool
-		Descending bool
+		Descending null.Val[bool]
 		Type       string
 		Comment    string
 	}

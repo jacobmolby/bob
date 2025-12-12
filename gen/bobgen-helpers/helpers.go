@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net"
 	"os"
-	"path"
 	"runtime/debug"
 	"strings"
 
@@ -19,6 +17,7 @@ import (
 	"github.com/knadh/koanf/v2"
 	"github.com/stephenafamo/bob/gen"
 	"github.com/stephenafamo/bob/gen/drivers"
+	"github.com/stephenafamo/bob/gen/plugins"
 )
 
 const DefaultConfigPath = "./bobgen.yaml"
@@ -42,62 +41,9 @@ type Config struct {
 	Queries []string `yaml:"queries"`
 	// List of tables that will be should be ignored. Others are included
 	Except map[string][]string
-
-	//-------
-
-	// The name of the folder to output the models package to
-	Output string
-	// The name you wish to assign to your generated models package
-	Pkgname   string
-	NoFactory bool `yaml:"no_factory"`
 }
 
-type Templates struct {
-	Models  []fs.FS
-	Factory []fs.FS
-	Queries []fs.FS
-}
-
-func DefaultOutputs(destination, pkgname string, noFactory bool, templates *Templates) []*gen.Output {
-	if templates == nil {
-		templates = &Templates{}
-	}
-
-	if destination == "" {
-		destination = "models"
-	}
-
-	if pkgname == "" {
-		pkgname = "models"
-	}
-
-	outputs := []*gen.Output{
-		{
-			Key:                     "models",
-			OutFolder:               destination,
-			PkgName:                 pkgname,
-			SeparatePackageForTests: true,
-			Templates:               append(templates.Models, gen.ModelTemplates),
-		},
-		{
-			Key:       "queries",
-			Templates: append(templates.Queries, gen.QueriesTemplates),
-		},
-	}
-
-	if !noFactory {
-		outputs = append(outputs, &gen.Output{
-			Key:       "factory",
-			OutFolder: path.Join(destination, "factory"),
-			PkgName:   "factory",
-			Templates: append(templates.Factory, gen.FactoryTemplates),
-		})
-	}
-
-	return outputs
-}
-
-func GetConfigFromFile[ConstraintExtra, DriverConfig any](configPath, driverConfigKey string) (gen.Config[ConstraintExtra], DriverConfig, error) {
+func GetConfigFromFile[ConstraintExtra, DriverConfig any](configPath, driverConfigKey string) (gen.Config[ConstraintExtra], DriverConfig, plugins.Config, error) {
 	var provider koanf.Provider
 	var config gen.Config[ConstraintExtra]
 	var driverConfig DriverConfig
@@ -108,34 +54,34 @@ func GetConfigFromFile[ConstraintExtra, DriverConfig any](configPath, driverConf
 		provider = file.Provider(configPath)
 	}
 	if err != nil && (configPath != DefaultConfigPath || !errors.Is(err, os.ErrNotExist)) {
-		return config, driverConfig, err
+		return config, driverConfig, plugins.Config{}, err
 	}
 
 	return GetConfigFromProvider[ConstraintExtra, DriverConfig](provider, driverConfigKey)
 }
 
-func GetConfigFromProvider[ConstraintExtra, DriverConfig any](provider koanf.Provider, driverConfigKey string) (gen.Config[ConstraintExtra], DriverConfig, error) {
+func GetConfigFromProvider[ConstraintExtra, DriverConfig any](provider koanf.Provider, driverConfigKey string) (gen.Config[ConstraintExtra], DriverConfig, plugins.Config, error) {
 	var config gen.Config[ConstraintExtra]
 	var driverConfig DriverConfig
+	var pluginsConfig plugins.Config
 
 	k := koanf.New(".")
 
 	// Add some defaults
 	err := k.Load(confmap.Provider(map[string]any{
-		"wipe":              true,
 		"struct_tag_casing": "snake",
 		"relation_tag":      "-",
 		"generator":         fmt.Sprintf("BobGen %s %s", driverConfigKey, Version()),
 	}, ""), nil)
 	if err != nil {
-		return config, driverConfig, err
+		return config, driverConfig, pluginsConfig, fmt.Errorf("failed to load defaults: %w", err)
 	}
 
 	if provider != nil {
 		// Load YAML config and merge into the previously loaded config (because we can).
 		err := k.Load(provider, yaml.Parser())
 		if err != nil {
-			return config, driverConfig, err
+			return config, driverConfig, pluginsConfig, fmt.Errorf("failed to load config from %s: %w", provider, err)
 		}
 	}
 
@@ -146,45 +92,47 @@ func GetConfigFromProvider[ConstraintExtra, DriverConfig any](provider koanf.Pro
 		return strings.Replace(strings.ToLower(s), "_", ".", 1)
 	}), nil)
 	if err != nil {
-		return config, driverConfig, err
+		return config, driverConfig, pluginsConfig, fmt.Errorf("failed to load env variables with prefix %s: %w", envKey, err)
 	}
 
 	err = k.UnmarshalWithConf("", &config, koanf.UnmarshalConf{Tag: "yaml"})
 	if err != nil {
-		return config, driverConfig, err
+		return config, driverConfig, pluginsConfig, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
 	err = k.UnmarshalWithConf(driverConfigKey, &driverConfig, koanf.UnmarshalConf{Tag: "yaml"})
 	if err != nil {
-		return config, driverConfig, err
+		return config, driverConfig, pluginsConfig, fmt.Errorf("failed to unmarshal driver config: %w", err)
 	}
 
-	return config, driverConfig, nil
+	err = k.UnmarshalWithConf("plugins", &pluginsConfig, koanf.UnmarshalConf{Tag: "yaml"})
+	if err != nil {
+		return config, driverConfig, pluginsConfig, fmt.Errorf("failed to unmarshal plugins config: %w", err)
+	}
+
+	switch k.String("plugins_preset") {
+	case "all":
+		pluginsConfig = plugins.PresetAll.Merge(pluginsConfig)
+	case "none":
+		pluginsConfig = plugins.PresetNone.Merge(pluginsConfig)
+	default:
+		pluginsConfig = plugins.PresetDefault.Merge(pluginsConfig)
+	}
+
+	return config, driverConfig, pluginsConfig, nil
 }
 
 func EnumType(types drivers.Types, enum string) string {
-	types.Register(enum, drivers.Type{
+	fullTyp := fmt.Sprintf("enums.%s", enum)
+	types.Register(fullTyp, drivers.Type{
 		NoRandomizationTest: true, // enums are often not random enough
-		RandomExpr: fmt.Sprintf(`all := all%s()
-            return all[f.IntBetween(0, len(all)-1)]`, enum),
+		Imports:             []string{"output(enums)"},
+		RandomExpr: `var e BASETYPE
+			all := e.All()
+			return all[f.IntBetween(0, len(all)-1)]`,
 	})
 
-	return enum
-}
-
-func GetFreePort() (int, error) {
-	a, err := net.ResolveTCPAddr("tcp", "localhost:0")
-	if err != nil {
-		return 0, fmt.Errorf("resolve localhost:0: %w", err)
-	}
-
-	l, err := net.ListenTCP("tcp", a)
-	if err != nil {
-		return 0, fmt.Errorf("listen on localhost:0: %w", err)
-	}
-	defer l.Close()
-
-	return l.Addr().(*net.TCPAddr).Port, nil
+	return fullTyp
 }
 
 func Migrate(ctx context.Context, db *sql.DB, dir fs.FS, pattern string) error {

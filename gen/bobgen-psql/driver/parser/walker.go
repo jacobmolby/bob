@@ -64,8 +64,8 @@ type col struct {
 	nullable bool
 }
 
-func (c col) LitterDump(w io.Writer) {
-	fmt.Fprintf(w, "(%s, %s, %t)", c.name, c.pos.String(), c.nullable)
+func (c col) LitterDump(w io.StringWriter) {
+	w.WriteString(fmt.Sprintf("(%s, %s, %t))", c.name, c.pos.String(), c.nullable))
 }
 
 type queryResult struct {
@@ -97,7 +97,7 @@ type walker struct {
 	errors []error
 }
 
-func (w *walker) matchNames(p1 [2]int32, p2 [2]int32) {
+func (w *walker) matchNames(p1, p2 [2]int32) {
 	w.maybeSetName(p1, w.names[p2])
 	w.maybeSetName(p2, w.names[p1])
 }
@@ -262,7 +262,7 @@ func (w *walker) reflectWalk(reflected reflect.Value) nodeInfo {
 
 	refStruct := reflected
 
-	if reflected.Kind() == reflect.Ptr {
+	if reflected.Kind() == reflect.Pointer {
 		if reflected.IsNil() {
 			return newNodeInfo()
 		}
@@ -642,6 +642,7 @@ func (w *walker) walkSortBy(a *pg.SortBy) nodeInfo {
 
 func (w *walker) walkFuncCall(a *pg.FuncCall) nodeInfo {
 	info := w.reflectWalk(reflect.ValueOf(a))
+	info.end = w.getEndOfTokenAfter(info.end, closeParToken)
 	if len(a.Funcname) > 0 {
 		funcNameInfo := info.children["Funcname"].children["0"]
 		if funcNameInfo.isValid() {

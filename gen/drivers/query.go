@@ -74,7 +74,7 @@ func (q QueryFile) Formatted() string {
 	return sb.String()
 }
 
-func (q QueryFile) QueryPosition(i int, headerLen int) string {
+func (q QueryFile) QueryPosition(i, headerLen int) string {
 	if i >= len(q.Queries) {
 		return "-1:-1"
 	}
@@ -285,15 +285,34 @@ func (q QueryArg) Types() []string {
 }
 
 func (c QueryCol) Type(currPkg string, i language.Importer, types Types) string {
+	return c.getType(currPkg, i, types, true)
+}
+
+func (c QueryCol) TypeNoImport(currPkg string, i language.Importer, types Types) string {
+	return c.getType(currPkg, i, types, false)
+}
+
+func (c QueryCol) getType(currPkg string, i language.Importer, types Types, doImport bool) string {
 	if c.Nullable == nil {
 		panic(fmt.Sprintf("Column %s has no nullable value defined", c.Name))
 	}
+	if !*c.Nullable {
+		typ, def := types.GetNameAndDef(currPkg, c.TypeName)
+		if doImport {
+			i.ImportList(def.Imports)
+		}
+		return typ
+	}
 
-	return types.GetNullable(currPkg, i, c.TypeName, *c.Nullable)
+	typ, imports := types.GetNullTypeWithImports(currPkg, c.TypeName)
+	if doImport {
+		i.ImportList(imports)
+	}
+	return typ.Name
 }
 
 func (c QueryArg) RandomExpr(currPkg string, i language.Importer, types Types) string {
-	typ := c.TypeDef(currPkg, i, types)
+	typ := c.TypeDef(currPkg, i, types, false)
 	var sb strings.Builder
 
 	if c.CanBeMultiple {
@@ -338,14 +357,14 @@ func (c QueryArg) RandomExpr(currPkg string, i language.Importer, types Types) s
 
 func (c QueryArg) Type(currPkg string, i language.Importer, types Types) string {
 	if c.CanBeMultiple {
-		return "[]" + c.TypeDef(currPkg, i, types)
+		return "[]" + c.TypeDef(currPkg, i, types, true)
 	}
-	return c.TypeDef(currPkg, i, types)
+	return c.TypeDef(currPkg, i, types, true)
 }
 
-func (c QueryArg) TypeDef(currPkg string, i language.Importer, types Types) string {
+func (c QueryArg) TypeDef(currPkg string, i language.Importer, types Types, doImport bool) string {
 	if len(c.Children) == 0 {
-		return c.Col.Type(currPkg, i, types)
+		return c.Col.getType(currPkg, i, types, doImport)
 	}
 
 	var sb strings.Builder
@@ -392,7 +411,7 @@ func (a QueryArg) ToExpression(i language.Importer, dialect, queryName, varName 
 func (a QueryArg) groupExpression(i language.Importer, dialect, queryName, varName string) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf(`bob.ExpressionFunc(func(ctx context.Context, w io.Writer, d bob.Dialect, start int) ([]any, error) {
+	sb.WriteString(fmt.Sprintf(`bob.ExpressionFunc(func(ctx context.Context, w io.StringWriter, d bob.Dialect, start int) ([]any, error) {
                   args := make([]any, 0, %d)`, len(a.Children)))
 
 	start := a.Positions[0][0]
@@ -400,7 +419,7 @@ func (a QueryArg) groupExpression(i language.Importer, dialect, queryName, varNa
 		childName := strmangle.TitleCase(child.Col.Name)
 		childExpression := child.ToExpression(i, dialect, queryName, fmt.Sprintf("%s.%s", varName, childName))
 		sb.WriteString(fmt.Sprintf(`
-            w.Write([]byte(%sSQL[%d:%d]))
+            w.WriteString(%sSQL[%d:%d])
             %sArgs, err := bob.Express(ctx, w, d, start+len(args), %s)
             if err != nil {
                 return nil, err
@@ -416,7 +435,7 @@ func (a QueryArg) groupExpression(i language.Importer, dialect, queryName, varNa
 	}
 
 	sb.WriteString(fmt.Sprintf(`
-            w.Write([]byte(%sSQL[%d:%d]))
+            w.WriteString(%sSQL[%d:%d])
             return args, nil
         })
     `, queryName, start, a.Positions[0][1]))

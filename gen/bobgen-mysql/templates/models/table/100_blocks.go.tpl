@@ -3,12 +3,12 @@
 {{$tAlias := .Aliases.Table $table.Key -}}
 {{if not $table.Constraints.Primary -}}
 	// {{$tAlias.UpPlural}} contains methods to work with the {{$table.Name}} view
-	var {{$tAlias.UpPlural}} = {{$.Dialect}}.NewViewx[*{{$tAlias.UpSingular}}, {{$tAlias.UpSingular}}Slice]("{{$table.Name}}")
+	var {{$tAlias.UpPlural}} = {{$.Dialect}}.NewViewx[*{{$tAlias.UpSingular}}, {{$tAlias.UpSingular}}Slice]("{{$table.Name}}", build{{$tAlias.UpSingular}}Columns({{quote $table.Key}}))
 	// {{$tAlias.UpPlural}}Query is a query on the {{$table.Name}} view
 	type {{$tAlias.UpPlural}}Query = *{{$.Dialect}}.ViewQuery[*{{$tAlias.UpSingular}}, {{$tAlias.UpSingular}}Slice]
 {{- else -}}
 	// {{$tAlias.UpPlural}} contains methods to work with the {{$table.Name}} table
-	var {{$tAlias.UpPlural}} = {{$.Dialect}}.NewTablex[*{{$tAlias.UpSingular}}, {{$tAlias.UpSingular}}Slice, *{{$tAlias.UpSingular}}Setter]("{{$table.Name}}", {{$table.UniqueColPairs}})
+	var {{$tAlias.UpPlural}} = {{$.Dialect}}.NewTablex[*{{$tAlias.UpSingular}}, {{$tAlias.UpSingular}}Slice, *{{$tAlias.UpSingular}}Setter]("{{$table.Name}}", build{{$tAlias.UpSingular}}Columns({{quote $table.Key}}), {{$table.UniqueColPairs}})
 	// {{$tAlias.UpPlural}}Query is a query on the {{$table.Name}} table
 	type {{$tAlias.UpPlural}}Query = *{{$.Dialect}}.ViewQuery[*{{$tAlias.UpSingular}}, {{$tAlias.UpSingular}}Slice]
 {{- end}}
@@ -29,10 +29,10 @@ func (s *{{$tAlias.UpSingular}}Setter) Apply(q *dialect.InsertQuery) {
 
 	q.AppendValues(
   {{range $index, $column := $table.NonGeneratedColumns -}}
-    bob.ExpressionFunc(func(ctx context.Context, w io.Writer, d bob.Dialect, start int) ([]any, error){
+    bob.ExpressionFunc(func(ctx context.Context, w io.StringWriter, d bob.Dialect, start int) ([]any, error){
         {{$colAlias := $tAlias.Column $column.Name -}}
         {{$colGetter := $.Types.FromOptional $.CurrentPackage $.Importer $column.Type (cat "s." $colAlias) $column.Nullable $column.Nullable -}}
-        if !{{$.Types.IsOptionalValid $.CurrentPackage $column.Type $column.Nullable (cat "s." $colAlias)}} {
+        if !({{$.Types.IsOptionalValid $.CurrentPackage $column.Type $column.Nullable (cat "s." $colAlias)}}) {
           return {{$.Dialect}}.Raw("DEFAULT").WriteSQL(ctx, w, d, start)
         }
         return {{$.Dialect}}.Arg({{$colGetter}}).WriteSQL(ctx, w, d, start)

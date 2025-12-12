@@ -8,7 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/stephenafamo/bob"
 	"github.com/stephenafamo/scan"
 )
 
@@ -50,43 +49,62 @@ func (p Pool) QueryContext(ctx context.Context, query string, args ...any) (scan
 
 // Begin is similar to [*pgxpool.Pool.Begin], but return a transaction that
 // implements [Queryer]
-func (p Pool) Begin(ctx context.Context) (bob.Transaction, error) {
+func (p Pool) Begin(ctx context.Context) (Tx, error) {
 	return p.BeginTx(ctx, pgx.TxOptions{})
 }
 
 // BeginTx is similar to [*pgxpool.Pool.BeginTx], but return a transaction that
 // implements [Queryer]
-func (p Pool) BeginTx(ctx context.Context, opts pgx.TxOptions) (bob.Transaction, error) {
-	tx, err := p.Pool.BeginTx(ctx, opts)
-	if err != nil {
-		return Tx{}, err
-	}
-
-	return NewTx(tx), nil
+func (p Pool) BeginTx(ctx context.Context, opts pgx.TxOptions) (Tx, error) {
+	return beginTx(ctx, opts, p.Pool)
 }
 
-// NewTx wraps an [*pgx.Tx] and returns a type that implements [Queryer] but still
-// retains the expected methods used by *pgx.Tx
-// This is useful when an existing *pgx.Tx is used in other places in the codebase
-func NewTx(tx pgx.Tx) Tx {
-	return Tx{tx}
+// Acquire is similar to [*pgxpool.Pool.Acquire] but returns a connection that implement [Queryer]
+func (p Pool) Acquire(ctx context.Context) (PoolConn, error) {
+	pgxConn, err := p.Pool.Acquire(ctx)
+	return NewPoolConn(pgxConn), err
 }
 
-// Tx is similar to *pgx.Tx but implements [Queryer]
-type Tx struct {
-	pgx.Tx
+// AcquireFunc is similar to [*pgxpool.Pool.AcquireFunc] but uses a function that accepts a connection that implements [Queryer].
+func (p *Pool) AcquireFunc(ctx context.Context, f func(PoolConn) error) error {
+	return p.Pool.AcquireFunc(ctx, func(pgxConn *pgxpool.Conn) error {
+		return f(NewPoolConn(pgxConn))
+	})
+}
+
+// NewConn wraps an [*pgx.Conn] and returns a type that implements [Queryer]
+// This is useful when an existing *pgx.Conn is used in other places in the codebase
+func NewPoolConn(conn *pgxpool.Conn) PoolConn {
+	return PoolConn{conn}
+}
+
+// Conn is similar to *pgx.Conn but implements [Queryer]
+type PoolConn struct {
+	*pgxpool.Conn
 }
 
 // ExecContext executes a query without returning any rows. The args are for any placeholder parameters in the query.
-func (t Tx) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	tag, err := t.Tx.Exec(ctx, query, args...)
+func (c PoolConn) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	tag, err := c.Conn.Exec(ctx, query, args...)
 	return result{tag}, err
 }
 
 // QueryContext executes a query that returns rows, typically a SELECT. The args are for any placeholder parameters in the query.
-func (t Tx) QueryContext(ctx context.Context, query string, args ...any) (scan.Rows, error) {
-	pgxRows, err := t.Tx.Query(ctx, query, args...)
+func (c PoolConn) QueryContext(ctx context.Context, query string, args ...any) (scan.Rows, error) {
+	pgxRows, err := c.Conn.Query(ctx, query, args...)
 	return rows{pgxRows}, err
+}
+
+// Begin is similar to [*pgxpool.Pool.Begin], but return a transaction that
+// implements [Queryer]
+func (c PoolConn) Begin(ctx context.Context) (Tx, error) {
+	return c.BeginTx(ctx, pgx.TxOptions{})
+}
+
+// BeginTx is similar to [*pgxpool.Pool.BeginTx], but return a transaction that
+// implements [Queryer]
+func (c PoolConn) BeginTx(ctx context.Context, opts pgx.TxOptions) (Tx, error) {
+	return beginTx(ctx, opts, c.Conn)
 }
 
 // NewConn wraps an [*pgx.Conn] and returns a type that implements [Queryer]
@@ -114,19 +132,14 @@ func (c Conn) QueryContext(ctx context.Context, query string, args ...any) (scan
 
 // Begin is similar to [*pgxpool.Pool.Begin], but return a transaction that
 // implements [Queryer]
-func (c Conn) Begin(ctx context.Context) (bob.Transaction, error) {
+func (c Conn) Begin(ctx context.Context) (Tx, error) {
 	return c.BeginTx(ctx, pgx.TxOptions{})
 }
 
 // BeginTx is similar to [*pgxpool.Pool.BeginTx], but return a transaction that
 // implements [Queryer]
-func (c Conn) BeginTx(ctx context.Context, opts pgx.TxOptions) (bob.Transaction, error) {
-	tx, err := c.Conn.BeginTx(ctx, opts)
-	if err != nil {
-		return Tx{}, err
-	}
-
-	return NewTx(tx), nil
+func (c Conn) BeginTx(ctx context.Context, opts pgx.TxOptions) (Tx, error) {
+	return beginTx(ctx, opts, c.Conn)
 }
 
 type result struct {

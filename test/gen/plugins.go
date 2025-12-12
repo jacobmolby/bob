@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/stephenafamo/bob/gen"
@@ -34,6 +35,10 @@ func (t templatePlugin[C]) PlugState(s *gen.State[C]) error {
 	}
 
 	for i := range s.Outputs {
+		if slices.Contains([]string{"dbinfo", "enums"}, s.Outputs[i].Key) {
+			// Skip the enums output, since there is no testDB defined
+			continue
+		}
 		s.Outputs[i].Templates = append(s.Outputs[i].Templates, templates)
 	}
 

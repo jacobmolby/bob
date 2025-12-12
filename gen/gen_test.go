@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stephenafamo/bob/gen/drivers"
+	"github.com/stephenafamo/bob/internal"
 )
 
 func TestProcessTypeReplacements(t *testing.T) {
@@ -25,10 +26,10 @@ func TestProcessTypeReplacements(t *testing.T) {
 					Nullable: true,
 				},
 				{
-					Name:       "domain",
+					Name:       "user_email",
 					Type:       "string",
 					DBType:     "text",
-					DomainName: "domain name",
+					DomainName: "email",
 				},
 				{
 					Name:     "by_named",
@@ -44,6 +45,12 @@ func TestProcessTypeReplacements(t *testing.T) {
 					Default:  "some db nonsense",
 					Nullable: false,
 					Comment:  "xid",
+				},
+				{
+					Name:     "author_id",
+					Type:     "int",
+					DBType:   "integer",
+					Nullable: true,
 				},
 			},
 		},
@@ -64,6 +71,17 @@ func TestProcessTypeReplacements(t *testing.T) {
 					Default:  "some db nonsense",
 					Nullable: false,
 					Comment:  "xid",
+				},
+			},
+		},
+		{
+			Columns: []drivers.Column{
+				{
+					Name:     "id",
+					Type:     "int",
+					DBType:   "serial",
+					AutoIncr: true,
+					Nullable: false,
 				},
 			},
 		},
@@ -89,46 +107,65 @@ func TestProcessTypeReplacements(t *testing.T) {
 		"xid.ID": {
 			Imports: []string{`"github.com/rs/xid"`},
 		},
+		"fk.ID": {
+			Imports: []string{`"github.com/fk"`},
+		},
+		"pk.ID": {
+			Imports: []string{`"github.com/pk"`},
+		},
 	})
 
 	replacements := []Replace{
 		{
-			Match: drivers.Column{
-				DBType: "serial",
+			Match: ColumnFilter{
+				DBType: internal.Pointer("SERIAL"),
 			},
 			Replace: "excellent.Type",
 		},
 		{
 			Tables: []string{"named_table"},
-			Match: drivers.Column{
-				Name: "id",
+			Match: ColumnFilter{
+				Name: internal.Pointer("id"),
 			},
 			Replace: "excellent.NamedType",
 		},
 		{
-			Match: drivers.Column{
-				Type:     "null.String",
-				Nullable: true,
+			Match: ColumnFilter{
+				Type:     internal.Pointer("null.String"),
+				Nullable: internal.Pointer(true),
 			},
 			Replace: "int",
 		},
 		{
-			Match: drivers.Column{
-				DomainName: "domain name",
+			Match: ColumnFilter{
+				DomainName: internal.Pointer("EMAIL"),
 			},
 			Replace: "contextInt",
 		},
 		{
-			Match: drivers.Column{
-				Name: "by_named",
+			Match: ColumnFilter{
+				Name: internal.Pointer("by_named"),
 			},
 			Replace: "big.Int",
 		},
 		{
-			Match: drivers.Column{
-				Comment: "xid",
+			Match: ColumnFilter{
+				Comment: internal.Pointer("xid"),
 			},
 			Replace: "xid.ID",
+		},
+		{
+			Match: ColumnFilter{
+				Name: internal.Pointer("/_id$/"),
+			},
+			Replace: "fk.ID",
+		},
+		{
+			Match: ColumnFilter{
+				Name:     internal.Pointer("id"),
+				AutoIncr: internal.Pointer(true),
+			},
+			Replace: "pk.ID",
 		},
 	}
 
@@ -154,11 +191,19 @@ func TestProcessTypeReplacements(t *testing.T) {
 		t.Error("type was wrong:", typ)
 	}
 
+	if typ := tables[0].Columns[5].Type; typ != "fk.ID" {
+		t.Error("type was wrong:", typ)
+	}
+
 	if typ := tables[1].Columns[0].Type; typ != "excellent.NamedType" {
 		t.Error("type was wrong:", typ)
 	}
 
 	if typ := tables[1].Columns[1].Type; typ != "xid.ID" {
+		t.Error("type was wrong:", typ)
+	}
+
+	if typ := tables[2].Columns[0].Type; typ != "pk.ID" {
 		t.Error("type was wrong:", typ)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/aarondl/opt/null"
 	"github.com/lib/pq"
 	helpers "github.com/stephenafamo/bob/gen/bobgen-helpers"
 	"github.com/stephenafamo/bob/gen/bobgen-psql/driver/parser"
@@ -200,7 +201,7 @@ func (d *driver) TablesInfo(ctx context.Context, tableFilter drivers.Filter) (dr
 
 	if len(include) > 0 {
 		var subqueries []string
-		stringPatterns, regexPatterns := tableFilter.ClassifyPatterns(include)
+		stringPatterns, regexPatterns := drivers.ClassifyPatterns(include)
 		if len(stringPatterns) > 0 {
 			subqueries = append(subqueries, fmt.Sprintf("%s in (%s)", keyClause, strmangle.Placeholders(true, len(stringPatterns), len(args)+1, 1)))
 			for _, w := range stringPatterns {
@@ -216,7 +217,7 @@ func (d *driver) TablesInfo(ctx context.Context, tableFilter drivers.Filter) (dr
 
 	if len(exclude) > 0 {
 		var subqueries []string
-		stringPatterns, regexPatterns := tableFilter.ClassifyPatterns(exclude)
+		stringPatterns, regexPatterns := drivers.ClassifyPatterns(exclude)
 		if len(stringPatterns) > 0 {
 			subqueries = append(subqueries, fmt.Sprintf("%s not in (%s)", keyClause, strmangle.Placeholders(true, len(stringPatterns), len(args)+1, 1)))
 			for _, w := range stringPatterns {
@@ -528,7 +529,7 @@ func (d *driver) Indexes(ctx context.Context) (drivers.DBIndexes[IndexExtra], er
 			isExpression := !rgxValidColumnName.MatchString(colName)
 			index.Columns = append(index.Columns, drivers.IndexColumn{
 				Name:         colName,
-				Desc:         r.Descending[i],
+				Desc:         null.From(r.Descending[i]),
 				IsExpression: isExpression,
 			})
 		}

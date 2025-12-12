@@ -5,12 +5,94 @@ description: How to configure Bob's code generation
 
 # Configuration
 
-> Driver specific configuration option and instructions can be found on their individual pages.
+Code generation is configured through a yaml configuration file (defaults to `./bobgen.yaml` in the current directory). A different configuration file can be passed with the `-c` or `--config` flag.
 
-code generation is configured through a yaml configuration file (defaults to `./bobgen.yaml` in the current directory). A different configuration file can be passed with the `-c` or `--config` flag.
+Configuration is split into 3 parts:
+
+1. [Plugins Configuration](#plugins-configuration): To configure built-in plugins.
+1. [Driver Configuration](#driver-configuration): To configure the database driver and its options.
+1. [General Configuration](#general-configuration): To configure the code generation options.
+
+## Plugins Configuration
+
+When using the CLI, Bob loads several built-in plugins.
+
+- `dbinfo`: Generates code for information about each database. Schemas, tables, columns, indexes, primary keys, foreign keys, unique constraints, and check constraints.
+- `enums`: Generates code for enums in a separate package, if there are any present.
+- `models`: Generates code for models. Depends on `enums`.
+- `factory`: Generates code for factories. Depends on `models`.
+- `dberrors`: Generates code for unique constraint errors. Depends on `models`.
+- `where`: Adds templates to the `models` package to generate code for where clauses e.g `models.SelectWhere.Table.Where.Rel()`.
+- `loaders`: Adds templates to the `models` package to generate code for loaders e.g `models.SelectThenLoad.Table.Rel()`.
+- `joins`: Adds templates to the `models` package to generate code for joins e.g `models.SelectJoin.Table.LeftJoin.Rel`.
+- `queries`: Generates code for queries.
+
+They can be configured in the `plugins` section of the configuration file.
+
+```yaml
+plugins_preset: "all" # Valid values are "default", "all" or "none".
+plugins:
+  dbinfo:
+    disabled: false
+    pkgname: "dbinfo"
+    destination: "dbinfo"
+  enums:
+    disabled: false
+    pkgname: "enums"
+    destination: "enums"
+  models:
+    disabled: false
+    pkgname: "models"
+    destination: "models"
+  factory:
+    disabled: false
+    pkgname: "factory"
+    destination: "factory"
+  dberrors:
+    disabled: false
+    pkgname: "dberrors"
+    destination: "dberrors"
+  where:
+    disabled: false
+  loaders:
+    disabled: false
+  joins:
+    disabled: false
+```
+
+:::tip
+
+Use the `plugins_preset` key to quickly enable or disable all plugins.
+Valid values are `all` or `none`. Defaults to `all`.
+
+:::
+
+:::warning
+
+The `disabled` setting will clear any generated `.bob.go` files in the target directory.
+
+:::
+
+## Driver Configuration
+
+The driver configruation is specific to each driver and is used to configure the connection to the database, as well as any driver-specific options.
+
+The details of the driver configuration are detailed in the documentation for each driver.
+
+- [Postgres](./psql.md)
+- [MySQL](./mysql.md)
+- [SQLite](./sqlite.md)
+- [SQL Migration Files](./sql.md)
+
+## General Configuration
 
 The configuration is unmarshalled into the following [Config](https://pkg.go.dev/github.com/stephenafamo/bob/gen#Config) struct.
 
+:::note
+
+All keys for general configuration are at the top level of the configuration file, and are not nested under `config` or any other key.
+
+:::
 
 ```go
 // Config for the running of the commands
@@ -26,8 +108,6 @@ type Config struct {
 	TypeSystem string `yaml:"type_system"`
 	// Struct tags to generate
 	Tags []string `yaml:"tags"`
-	// Disable generating factories for models
-	NoFactory bool `yaml:"no_factory"`
 	// Disable generating go test files
 	NoTests bool `yaml:"no_tests"`
 	// Disable back referencing in the loaded relationship structs
@@ -58,22 +138,20 @@ type Config struct {
 | ------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------ |
 | type_system         | How to handle optional and nullable types. Available options are `github.com/aarondl/opt` and `database/sql`    | "github.com/aarondl/opt" |
 | tags                | Struct tags to generate                                                                                         | []                       |
-| no_factory          | Disable generating factories for models                                                                         | false                    |
 | no_tests            | Disable generating go test files                                                                                | false                    |
 | no_back_referencing | If this is set to true, when relationships are loaded, the parent is not added to the loaded object's relations | false                    |
-| wipe                | If to delete the output folder before generation                                                                | false                    |
 | struct_tag_casing   | Decides the casing for go structure tag names. camel, title or snake (default snake)                            | "snake"                  |
 | relation_tag        | Struct tag for the relationship object                                                                          | "-"                      |
 | tag_ignore          | List of column names that should have tags values set to '-'                                                    | []                       |
-| types               | Register custom types. [See more](#types)                                                                       | "{}                      |
-| aliases             | Customize aliases. [See more](#aliases)                                                                         | {}                       |
 | constraints         | Define additional constraints. [See more](#constraints)                                                         | {}                       |
-| relationships       | Define additional relationships. [See more](#relationships)                                                     | {}                       |
+| aliases             | Customize aliases. [See more](#aliases)                                                                         | {}                       |
+| types               | Register custom types. [See more](#types)                                                                       | {}                       |
 | replacements        | Define replacements for types. [See more](#replacements)                                                        | []                       |
+| relationships       | Define additional relationships. [See more](#relationships)                                                     | {}                       |
 | inflections         | Define inflections for pluralization. [See more](#inflections)                                                  | {}                       |
 | generator           | Customize the generator name in the top level comment of generated files                                        | ""                       |
 
-## Aliases
+### Aliases
 
 Names are automatically generated for you. If you name your database entities properly you will likely have descriptive names generated in the end. However, in the case where the names in your database are bad AND unchangeable, or Bob's inference doesn't understand the names you do have (even though they are good and correct) you can use aliases to change the name of your tables, columns and relationships in the generated Go code.
 
@@ -121,7 +199,31 @@ aliases:
 
 :::
 
-## Types
+### Constraints
+
+It is possible to manually define additional constraints for your database. This is particularly useful if your database system or driver does not support constraints
+
+This can also be used to create relationships since those are derived from foreign key constraints.
+
+```yaml
+constraints:
+  pilots:
+    primary: # This will overwirte any existing primary key on the table
+      name: "pilots_pkey"
+      columns: [id]
+    uniques: # These will be added to existing unique constraints
+      - name: "pilot_name_unique"
+        columns: [name]
+      - name: "pilot_nickname_unique"
+        columns: [nickname]
+    foreign: # These will be added to existing foreign constraints
+      - name: "pilot_to_jets"
+        columns: [id]
+        foreign_table: "jets"
+        foreign_columns: [pilot_id]
+```
+
+### Types
 
 Custom types can be registered with the `types` key.  
 This will also allow you to edit the configuration of existing types, for example, to change how it is randomized by default.
@@ -138,7 +240,7 @@ To prevent generating a test for the random expression, set `no_randomization_te
 In certain cases, it is necessary to compare values of the type to determine if they are equal.
 In such cases, you can provide a `compareExpr` which is an expression that compares two values of the type. Use the placeholders `AAA` and `BBB` as the types to be compared.
 
-### Imports
+#### Imports
 
 The `imports` key is used to specify any imports that are needed for the type.  
 The first import is the package that contains the type, and the rest are any other imports that are needed.
@@ -154,7 +256,7 @@ types:
       - '"github.com/stephenafamo/bob/types"'
 ```
 
-### Example Types Configuration
+#### Example Types Configuration
 
 ```yaml
 types:
@@ -166,7 +268,7 @@ types:
     depends_on:
       - "string"
     # To be used in factory.random_type
-    # Use TYPE as a placeholder for the type
+    # Use BASETYPE as a placeholder for the type
     # * a variable `f` of type `faker.Faker` is available
     # * another variable `limits` which is a slice of strings with any limits
     #   for example, a VARCHAR(255) would have limits = ["255"]
@@ -219,7 +321,7 @@ types:
       - '"bytes"'
 ```
 
-## Replacements
+### Replacements
 
 There exists the ability to override types that the driver has inferred. The way to accomplish this is through the config file.
 
@@ -227,19 +329,17 @@ There exists the ability to override types that the driver has inferred. The way
 replacements:
   - tables: ["table_name"] # What tables to look inside. Matches all tables if empty
 
-    # The match is a drivers.Column struct, and matches on almost all fields.
-    # Notable exception for the unique bool. Matches are done
-    # with "logical and" meaning it must match all specified matchers.
-    # Boolean values are only checked if all the string specifiers match first,
-    # and they must always match.
+    # The match is a `gen.ColumnFilter` struct, and specifies which column to match.
+    # Matches are done using "logical AND" meaning all the specified conditions must be met.
     #
-    # Note there is precedence for types.match, more specific things should appear
-    # further down in the config as once a matching rule is found it is executed
-    # immediately.
+    # All string fields can be specified as a regular expression by enclosing them with /.../.
+    # Values are matched in a case-insensitive manner.
     match:
       name: "username" # Matches the column name
+      # name: "/id$/" # Regex is also supported (case-insensitive)
       db_type: "varchar(255)" # Matches the database type
-      default: "NULL" # Matches the default value
+      type: "string" # Matches the inferred column type
+      default: "NULL" # Matches the default value (case-insensitive)
       comment: "The username" # Matches the column comment
       nullable: true # Matches the nullable value. Defaults to false.
       generated: false # Matches the generated value. Defaults to false.
@@ -250,31 +350,7 @@ replacements:
     replace: "mynull.String"
 ```
 
-## Constraints
-
-It is possible to manually define additional constraints for your database. This is particularly useful if your database system or driver does not support constraints
-
-This can also be used to create relationships since those are derived from foreign key constraints.
-
-```yaml
-constraints:
-  pilots:
-    primary: # This will overwirte any existing primary key on the table
-      name: "pilots_pkey"
-      columns: [id]
-    uniques: # These will be added to existing unique constraints
-      - name: "pilot_name_unique"
-        columns: [name]
-      - name: "pilot_nickname_unique"
-        columns: [nickname]
-    foreign: # These will be added to existing foreign constraints
-      - name: "pilot_to_jets"
-        columns: [id]
-        foreign_table: "jets"
-        foreign_columns: [pilot_id]
-```
-
-## Relationships
+### Relationships
 
 Relationships are automatically inferred from foreign key constraints. However, in certain cases, it is either not possible or not desirable to add a foreign key relationship.
 
@@ -302,7 +378,7 @@ relationships:
           modify: "" | from" | "to"
 ```
 
-### Related Through
+#### Related Through
 
 The configuration also allows us to describe relationships that span multiple tables. We achieve this by having multiple `sides`.
 
@@ -321,7 +397,7 @@ relationships:
           columns: [[id, team_id]]
 ```
 
-### Related Where
+#### Related Where
 
 The configuration also allows us to describe relationships that are not only based on matching columns but also columns with static values. For example, we may want to add a relationship to teams for verified members.
 
@@ -339,7 +415,7 @@ relationships:
               go_value: "true"
 ```
 
-## Inflections
+### Inflections
 
 With inflections, you can control the rules used to generate singular/plural variants. This is useful if a certain word or suffix is used multiple times, and you do not want to create aliases for every instance.
 

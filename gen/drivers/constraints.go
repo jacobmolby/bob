@@ -1,6 +1,10 @@
 package drivers
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/aarondl/opt/null"
+)
 
 // DBIndexes lists all indexes in the database schema keyed by table name
 type DBIndexes[Extra any] map[string][]Index[Extra]
@@ -16,9 +20,9 @@ type Index[Extra any] struct {
 }
 
 type IndexColumn struct {
-	Name         string `yaml:"name" json:"name"`
-	Desc         bool   `yaml:"desc" json:"desc"`
-	IsExpression bool   `yaml:"is_expression" json:"is_expression"`
+	Name         string         `yaml:"name" json:"name"`
+	Desc         null.Val[bool] `yaml:"desc" json:"desc"`
+	IsExpression bool           `yaml:"is_expression" json:"is_expression"`
 }
 
 func (i Index[E]) HasExpressionColumn() bool {
@@ -53,6 +57,26 @@ type Constraints[Extra any] struct {
 	Foreign []ForeignKey[Extra] `yaml:"foreign" json:"foreign"`
 	Uniques []Constraint[Extra] `yaml:"uniques" json:"uniques"`
 	Checks  []Check[Extra]      `yaml:"check" json:"check"`
+}
+
+func (c Constraints[E]) All() []Constraint[E] {
+	all := make([]Constraint[E], 0, 1+len(c.Foreign)+len(c.Uniques)+len(c.Checks))
+
+	if c.Primary != nil {
+		all = append(all, *c.Primary)
+	}
+
+	for _, fk := range c.Foreign {
+		all = append(all, Constraint[E](fk.Constraint))
+	}
+
+	all = append(all, c.Uniques...)
+
+	for _, check := range c.Checks {
+		all = append(all, Constraint[E](check.Constraint))
+	}
+
+	return all
 }
 
 // Constraint represents a constraint in a database

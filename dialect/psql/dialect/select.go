@@ -29,9 +29,14 @@ type SelectQuery struct {
 	bob.Load
 	bob.EmbeddedHook
 	bob.ContextualModdable[*SelectQuery]
+
+	CombinedOrder  clause.OrderBy
+	CombinedLimit  clause.Limit
+	CombinedFetch  clause.Fetch
+	CombinedOffset clause.Offset
 }
 
-func (s SelectQuery) WriteSQL(ctx context.Context, w io.Writer, d bob.Dialect, start int) ([]any, error) {
+func (s SelectQuery) WriteSQL(ctx context.Context, w io.StringWriter, d bob.Dialect, start int) ([]any, error) {
 	var err error
 	var args []any
 
@@ -46,7 +51,18 @@ func (s SelectQuery) WriteSQL(ctx context.Context, w io.Writer, d bob.Dialect, s
 	}
 	args = append(args, withArgs...)
 
-	w.Write([]byte("SELECT "))
+	needsParens := false
+	if len(s.Combines.Queries) > 0 &&
+		(len(s.OrderBy.Expressions) > 0 ||
+			s.Limit.Count != nil ||
+			s.Offset.Count != nil ||
+			s.Fetch.Count != nil ||
+			len(s.Locks.Locks) > 0) {
+		w.WriteString("(")
+		needsParens = true
+	}
+
+	w.WriteString("SELECT ")
 
 	distinctArgs, err := bob.ExpressIf(ctx, w, d, start+len(args), s.Distinct,
 		s.Distinct.On != nil, "", " ")
@@ -95,13 +111,6 @@ func (s SelectQuery) WriteSQL(ctx context.Context, w io.Writer, d bob.Dialect, s
 	}
 	args = append(args, windowArgs...)
 
-	combineArgs, err := bob.ExpressSlice(ctx, w, d, start+len(args),
-		s.Combines.Queries, "\n", "\n", "")
-	if err != nil {
-		return nil, err
-	}
-	args = append(args, combineArgs...)
-
 	orderArgs, err := bob.ExpressIf(ctx, w, d, start+len(args), s.OrderBy,
 		len(s.OrderBy.Expressions) > 0, "\n", "")
 	if err != nil {
@@ -137,6 +146,45 @@ func (s SelectQuery) WriteSQL(ctx context.Context, w io.Writer, d bob.Dialect, s
 	}
 	args = append(args, lockArgs...)
 
-	w.Write([]byte("\n"))
+	if needsParens {
+		w.WriteString(")")
+	}
+
+	combineArgs, err := bob.ExpressSlice(ctx, w, d, start+len(args),
+		s.Combines.Queries, "\n", "\n", "")
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, combineArgs...)
+
+	combinedOrderArgs, err := bob.ExpressIf(ctx, w, d, start+len(args), s.CombinedOrder,
+		len(s.CombinedOrder.Expressions) > 0, "\n", "")
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, combinedOrderArgs...)
+
+	combinedLimitArgs, err := bob.ExpressIf(ctx, w, d, start+len(args), s.CombinedLimit,
+		s.CombinedLimit.Count != nil, "\n", "")
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, combinedLimitArgs...)
+
+	combinedOffsetArgs, err := bob.ExpressIf(ctx, w, d, start+len(args), s.CombinedOffset,
+		s.CombinedOffset.Count != nil, "\n", "")
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, combinedOffsetArgs...)
+
+	combinedFetchArgs, err := bob.ExpressIf(ctx, w, d, start+len(args), s.CombinedFetch,
+		s.CombinedFetch.Count != nil, "\n", "")
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, combinedFetchArgs...)
+
+	w.WriteString("\n")
 	return args, nil
 }

@@ -13,19 +13,16 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/stephenafamo/bob/gen/drivers"
 	"github.com/stephenafamo/bob/gen/language"
 )
 
 type Output struct {
+	// If true, new files are not generated, but existing files are deleted
+	Disabled bool
+
 	// The key has to be unique in a gen.State
 	// it also makes it possible to target modifing a specific output
-	// There are special keys that are reserved for internal use
-	// * "models" - for model templates.
-	// * "factory" - for factory templates
-	// * "queries" - for query templates.
-	//    - This is run once for each query folder
-	//    - The PkgName is set to the folder name in each run
-	//    - The OutFolder is set to the same folder
 	Key string
 
 	PkgName                 string
@@ -73,6 +70,13 @@ func (o *Output) initOutFolders() error {
 		}
 	}
 
+	// Do not create the output folder if it is disabled
+	// However, we do this after cleaning up any old `.bob` files
+	if o.Disabled {
+		fmt.Fprintf(os.Stderr, "%-20s %s\n", "== DISABLED ==", o.OutFolder)
+		return nil
+	}
+
 	if err := os.MkdirAll(o.OutFolder, os.ModePerm); err != nil {
 		return fmt.Errorf("unable to create output folder %q: %w", o.OutFolder, err)
 	}
@@ -94,7 +98,7 @@ func (o *Output) initOutFolders() error {
 // be forced back to linux style paths.
 func (o *Output) initTemplates(funcs template.FuncMap) error {
 	if len(o.Templates) == 0 {
-		return errors.New("no templates defined")
+		return nil
 	}
 
 	o.singletonTemplates = template.New("")
@@ -202,8 +206,65 @@ type executeTemplateData[T, C, I any] struct {
 	langs        language.Languages
 }
 
+func generateTableOutput[T, C, I any](o *Output, data *TemplateData[T, C, I], generator string, noTests bool) error {
+	if o.tableTemplates == nil || len(o.tableTemplates.Templates()) == 0 {
+		return nil
+	}
+
+	dirExtMap := groupTemplatesByExtension(o.tableTemplates)
+	langs := language.Languages{
+		GeneratorName:           generator,
+		SeparatePackageForTests: o.SeparatePackageForTests,
+	}
+	for _, table := range data.Tables {
+		data.Table = table
+
+		// Generate the regular templates
+		if err := generateOutput(o, dirExtMap, o.tableTemplates, data, langs, noTests); err != nil {
+			return fmt.Errorf("unable to generate output: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func generateQueryOutput[T, C, I any](o *Output, data *TemplateData[T, C, I], generator string, noTests bool) error {
+	if o.queryTemplates == nil || len(o.queryTemplates.Templates()) == 0 {
+		return nil
+	}
+
+	dirExtMap := groupTemplatesByExtension(o.queryTemplates)
+	langs := language.Languages{
+		GeneratorName:           generator,
+		SeparatePackageForTests: o.SeparatePackageForTests,
+	}
+	for _, file := range data.QueryFolder.Files {
+		data.QueryFile = file
+
+		// We do this so that the name of the file is correct
+		data.Table = drivers.Table[C, I]{
+			Name: file.BaseName(),
+		}
+
+		// Generate the regular templates
+		if err := generateOutput(o, dirExtMap, o.queryTemplates, data, langs, noTests); err != nil {
+			return fmt.Errorf("unable to generate output: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // generateOutput builds the file output and sends it to outHandler for saving
 func generateOutput[T, C, I any](o *Output, dirExts extMap, tpl *template.Template, data *TemplateData[T, C, I], langs language.Languages, noTests bool) error {
+	if o.Disabled {
+		return nil // skip disabled outputs
+	}
+
+	// assign reusable scratch buffers to provided Output
+	o.templateByteBuffer = &bytes.Buffer{}
+	o.templateHeaderByteBuffer = &bytes.Buffer{}
+
 	if err := executeTemplates(executeTemplateData[T, C, I]{
 		output:       o,
 		data:         data,
@@ -233,7 +294,31 @@ func generateOutput[T, C, I any](o *Output, dirExts extMap, tpl *template.Templa
 
 // generateSingletonOutput processes the templates that should only be run
 // one time.
-func generateSingletonOutput[T, C, I any](o *Output, data *TemplateData[T, C, I], langs language.Languages, noTests bool) error {
+func generateSingletonOutput[T, C, I any](o *Output, data *TemplateData[T, C, I], generator string, noTests bool) error {
+	// set the package name for this output
+	data.PkgName = o.PkgName
+
+	if err := o.initOutFolders(); err != nil {
+		return fmt.Errorf("unable to initialize the output folders: %w", err)
+	}
+
+	if o.Disabled {
+		return nil // skip disabled outputs
+	}
+
+	if o.numTemplates() == 0 {
+		return fmt.Errorf("no templates found for output %q", o.Key)
+	}
+
+	// assign reusable scratch buffers to provided Output
+	o.templateByteBuffer = &bytes.Buffer{}
+	o.templateHeaderByteBuffer = &bytes.Buffer{}
+
+	langs := language.Languages{
+		GeneratorName:           generator,
+		SeparatePackageForTests: o.SeparatePackageForTests,
+	}
+
 	if err := executeSingletonTemplates(executeTemplateData[T, C, I]{
 		output:    o,
 		data:      data,
@@ -298,12 +383,12 @@ func executeTemplates[T, C, I any](e executeTemplateData[T, C, I], tests bool) e
 		// Skip writing the file if the content is empty
 		if out.Len()-prevLen < 1 {
 			fmt.Fprintf(os.Stderr, "%-20s %s/%s\n",
-				"== SKIPPED ==", e.output.OutFolder, fName)
+				"==  SKIPPED ==", e.output.OutFolder, fName)
 			continue
 		}
 
 		fmt.Fprintf(os.Stderr, "%-20s %s/%s\n",
-			fmt.Sprintf("%7d bytes", out.Len()-prevLen),
+			fmt.Sprintf("%8d bytes", out.Len()-prevLen),
 			e.output.OutFolder, fName)
 
 		path := filepath.Join(e.output.OutFolder, fName)
@@ -354,12 +439,12 @@ func executeSingletonTemplates[T, C, I any](e executeTemplateData[T, C, I], test
 		// Skip writing the file if the content is empty
 		if out.Len()-prevLen < 1 {
 			fmt.Fprintf(os.Stderr, "%-20s %s/%s\n",
-				"== SKIPPED ==", e.output.OutFolder, fileName)
+				"==  SKIPPED ==", e.output.OutFolder, fileName)
 			continue
 		}
 
 		fmt.Fprintf(os.Stderr, "%-20s %s/%s\n",
-			fmt.Sprintf("%7d bytes", out.Len()-prevLen),
+			fmt.Sprintf("%8d bytes", out.Len()-prevLen),
 			e.output.OutFolder, fileName)
 
 		path := filepath.Join(e.output.OutFolder, fileName)

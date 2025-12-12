@@ -1,7 +1,6 @@
 package gen
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -90,6 +89,7 @@ func Run[T, C, I any](ctx context.Context, s *State[C], driver drivers.Interface
 	initInflections(s.Config.Inflections)
 	processConstraintConfig(dbInfo.Tables, s.Config.Constraints)
 	processTypeReplacements(types, s.Config.Replacements, dbInfo.Tables)
+	types.SetOutputImports(pkgMap)
 
 	relationships := buildRelationships(dbInfo.Tables)
 	if err := processRelationshipConfig(&s.Config, dbInfo.Tables, relationships); err != nil {
@@ -109,7 +109,9 @@ func Run[T, C, I any](ctx context.Context, s *State[C], driver drivers.Interface
 	if s.Config.Aliases == nil {
 		s.Config.Aliases = make(map[string]drivers.TableAlias)
 	}
-	initAliases(s.Config.Aliases, dbInfo.Tables, relationships)
+	if err := initAliases(s.Config.Aliases, dbInfo.Tables, relationships); err != nil {
+		return fmt.Errorf("initializing aliases: %w\nSee: https://bob.stephenafamo.com/docs/code-generation/configuration#aliases", err)
+	}
 	if err = s.initTags(); err != nil {
 		return fmt.Errorf("unable to initialize struct tags: %w", err)
 	}
@@ -123,7 +125,6 @@ func Run[T, C, I any](ctx context.Context, s *State[C], driver drivers.Interface
 		Aliases:           s.Config.Aliases,
 		Types:             types,
 		Relationships:     relationships,
-		NoFactory:         s.Config.NoFactory,
 		NoTests:           s.Config.NoTests,
 		NoBackReferencing: s.Config.NoBackReferencing,
 		StructTagCasing:   s.Config.StructTagCasing,
@@ -156,8 +157,6 @@ func Run[T, C, I any](ctx context.Context, s *State[C], driver drivers.Interface
 
 func generate[T, C, I any](s *State[C], data *TemplateData[T, C, I]) error {
 	knownKeys := make(map[string]struct{})
-	templateByteBuffer := &bytes.Buffer{}
-	templateHeaderByteBuffer := &bytes.Buffer{}
 
 	for _, o := range s.Outputs {
 		if _, ok := knownKeys[o.Key]; ok {
@@ -165,83 +164,36 @@ func generate[T, C, I any](s *State[C], data *TemplateData[T, C, I]) error {
 		}
 		knownKeys[o.Key] = struct{}{}
 
-		if len(o.Templates) == 0 {
-			continue
-		}
-
 		if err := o.initTemplates(s.CustomTemplateFuncs); err != nil {
 			return fmt.Errorf("unable to initialize templates: %w", err)
 		}
 
-		if o.numTemplates() == 0 {
-			continue
-		}
-
-		iterator := slices.Values([]struct{}{{}})
-
-		if o.Key == "queries" {
-			iterator = func(yield func(struct{}) bool) {
-				for _, folder := range data.QueryFolders {
-					o.PkgName = filepath.Base(folder.Path)
-					o.OutFolder = folder.Path
-					data.QueryFolder = folder
-
-					if !yield(struct{}{}) {
-						return
-					}
-				}
-			}
-		}
-
-		for range iterator {
-			// set the package name for this output
-			data.PkgName = o.PkgName
-
-			if err := o.initOutFolders(); err != nil {
-				return fmt.Errorf("unable to initialize the output folders: %w", err)
-			}
-
-			// assign reusable scratch buffers to provided Output
-			o.templateByteBuffer = templateByteBuffer
-			o.templateHeaderByteBuffer = templateHeaderByteBuffer
-
-			langs := language.Languages{
-				GeneratorName:           s.Config.Generator,
-				SeparatePackageForTests: o.SeparatePackageForTests,
-			}
-
-			if err := generateSingletonOutput(o, data, langs, s.Config.NoTests); err != nil {
+		// Has a stable output folder
+		if o.OutFolder != "" {
+			if err := generateSingletonOutput(o, data, s.Config.Generator, s.Config.NoTests); err != nil {
 				return fmt.Errorf("singleton template output: %w", err)
 			}
 
-			switch o.Key {
-			case "queries":
-				dirExtMap := groupTemplatesByExtension(o.queryTemplates)
-				for _, file := range data.QueryFolder.Files {
-					data.QueryFile = file
+			if err := generateTableOutput(o, data, s.Config.Generator, s.Config.NoTests); err != nil {
+				return fmt.Errorf("unable to generate output: %w", err)
+			}
+		}
 
-					// We do this so that the name of the file is correct
-					data.Table = drivers.Table[C, I]{
-						Name: file.BaseName(),
-					}
+		if o.queryTemplates != nil && len(o.queryTemplates.Templates()) > 0 {
+			// If the output is for queries, we need to iterate over each query folder
+			for _, folder := range data.QueryFolders {
+				o.PkgName = filepath.Base(folder.Path)
+				o.OutFolder = folder.Path
+				data.QueryFolder = folder
 
-					if err := generateOutput(o, dirExtMap, o.queryTemplates, data, langs, s.Config.NoTests); err != nil {
-						return fmt.Errorf("unable to generate output: %w", err)
-					}
+				if err := generateSingletonOutput(o, data, s.Config.Generator, s.Config.NoTests); err != nil {
+					return fmt.Errorf("singleton template output: %w", err)
 				}
 
-			default:
-				dirExtMap := groupTemplatesByExtension(o.tableTemplates)
-				for _, table := range data.Tables {
-					data.Table = table
-
-					// Generate the regular templates
-					if err := generateOutput(o, dirExtMap, o.tableTemplates, data, langs, s.Config.NoTests); err != nil {
-						return fmt.Errorf("unable to generate output: %w", err)
-					}
+				if err := generateQueryOutput(o, data, s.Config.Generator, s.Config.NoTests); err != nil {
+					return fmt.Errorf("unable to generate output: %w", err)
 				}
 			}
-
 		}
 	}
 
@@ -288,8 +240,14 @@ func buildPkgMap(outputs []*Output) (map[string]string, error) {
 	pkgMap := make(map[string]string)
 
 	for _, o := range outputs {
-		if o.Key == "queries" {
-			continue // queries have no fixed output folder
+		if o.Disabled {
+			continue // skip disabled outputs
+		}
+
+		if o.OutFolder == "" {
+			// skip outputs with no fixed output folder
+			// such as with the "queries" plugin
+			continue
 		}
 
 		pkg, _, err := language.PackageForFolder(o.OutFolder)
