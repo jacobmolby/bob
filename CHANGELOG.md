@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `enum_format` configuration option to control enum value identifier formatting. Options: `"title_case"` (default, e.g., `InProgress`) or `"screaming_snake_case"` (e.g., `IN_PROGRESS`).
+- Added `Unqualified()` method to generated column structures that returns columns without table alias/prefix. (thanks @atzedus)
+- Added `PreloadCount` and `ThenLoadCount` to generate code for preloading and then loading counts for relationships. (thanks @jacobmolby)
+- MySQL support for insert queries executing loaders (e.g., `InsertThenLoad`, `InsertThenLoadCount`). (thanks @jacobmolby)
+- Added overwritable hooks that are run before the exec or scanning test of generated queries. This allows seeding data before the test runs.
+- Added `bob.Each` function to iterate over query results (range-over-func). (thanks @toqueteos)
+- Added support for the `VALUES` statement in MySQL, PostgreSQL, and SQLite. (thanks @manhrev)
+- Added MariaDB compatibility check in gen/bobgen-mysql (thanks @dumdev25)
+- Added `ALL`, `SOME`, `ANY` expressions for MySQL and PostgreSQL dialects. Added `EXISTS` expression for all dialects. (thanks @manhrev)
+
+### Fixed
+
+- Fix collisions for preloader alias generation. Replaced `RandInt` with `NextUniqueInt` (thanks @atzedus)
+- Fix an issue where the random function of aliased custom types were not being used in generated query tests.
+- Properly recognize placeholders in LIMIT and OFFSET when generating queries for PostgreSQL.
+- Throw an error on an empty SET clause during SQL generation rather than sending invalid syntax to database. (thanks @Xaeroxe)
+- Fix MySQL `Insert().One()`/`All()`/`Cursor()` using `SELECT *` instead of explicit model columns when re-fetching inserted rows, consistent with PostgreSQL/SQLite `RETURNING`. (thanks @tak848)
+
 ## [v0.42.0] - 2025-11-25
 
 ### Fixed
